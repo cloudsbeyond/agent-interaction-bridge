@@ -1,0 +1,92 @@
+schema_version: 1
+contracts:
+  - id: interaction.hitl
+    title: Interaction intent and HITL approval
+    tier: critical
+    risk_tags:
+      - authority-changing
+      - manual-review
+      - schema
+    status: partial
+    l0:
+      owner: human
+      status: frozen
+      problem: Interpret conversational acts, feedback, retry requests, risk approval, and choices without leaking channel payloads, expression routing, or carrier rendering into agent semantics.
+    l1:
+      owner: human
+      status: frozen
+      expression: HumanTurn -> InteractionIntent -> task policy, correction, retry, presentation feedback, or optional approval signal
+      paths:
+        - architecture/system-design.md
+        - architecture/agentic-ontology.md
+    l2:
+      owner: human
+      status: frozen
+      path: architecture/contracts/interaction-hitl.yaml
+      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      invariants:
+        - "`preferences.gatewayMode` selects either `relay` or `adapter`; unknown values fall back to `adapter`."
+        - "The channel `/gatewayMode relay|adapter|default` command may set a current-session override without mutating global config."
+        - "Status and doctor surfaces must print the resolved gateway mode so operators can explicitly verify relay versus adapter behavior."
+        - "`relay` bypasses complex intent classification, helper-model intent judgment, interaction protocol injection, Dynamic UI routing, and presentation reply hints while preserving access control, allowed chats, mention policy, queueing, sessions, cwd/profile policy, explicit approval policy, attachments, quotes, stream rendering, and channel delivery."
+        - "`adapter` keeps the interaction-agent behavior: intent classification, optional stateless helper-model judgment, HITL protocol guidance, presentation feedback handling, and reply-mode hints."
+        - "When `adapter` is requested but Runtime Services adapter resources are unavailable, bridge must visibly degrade the current session to `relay` and notify the channel."
+        - InteractionIntent is conversational-act interpretation, not channel payload, presentation layout, Dynamic UI routing, or execution authority.
+        - Visual, report, comparison, watch, voice, and other expression choices belong to ExpressionProfile and PresentationPlan, not InteractionIntent.
+        - Risk approval and choice requests remain provider-neutral AgentSignal or InteractionRequest data.
+        - Helper models may classify intent only as stateless typed proposals without execution authority.
+        - Approval actions must be registered with explicit run, consume, and terminal semantics before card payloads become task decisions.
+      generation_commands:
+        - cwd: .
+          command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+          mode: check
+          writes_workspace: false
+          ci_required: true
+      generation_command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+      drift_checks:
+        - agent-interaction-bridge architecture check
+      drift_check: agent-interaction-bridge architecture check
+    l3:
+      owner: agent
+      mode: durable
+      carriers:
+        - src/interaction
+        - src/task
+        - src/card/interaction-card.ts
+        - src/card/task-approval-card.ts
+      commands:
+        - pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+    l4:
+      owner: agent
+      artifacts:
+        - src/interaction/intent.ts
+        - src/interaction/model-judge.ts
+        - src/interaction/protocol.ts
+        - src/interaction/prompt.ts
+        - src/interaction/risk-policy.ts
+        - src/runtime/interaction-runtime.ts
+        - src/bot/prompt-plan.ts
+        - src/bot/channel.ts
+        - src/task/approval-contract.ts
+        - src/task/run-policy.ts
+        - src/task/approval-store.ts
+        - src/card/interaction-card.ts
+        - src/card/task-approval-card.ts
+      ai_contract_index: agent-devops/ai-contract-index.md
+      harness:
+        - src/interaction/intent.test.ts
+        - src/interaction/model-judge.test.ts
+        - src/interaction/protocol.test.ts
+        - src/interaction/prompt.test.ts
+        - src/interaction/risk-policy.test.ts
+        - src/runtime/interaction-runtime.test.ts
+        - src/bot/prompt-plan.test.ts
+        - src/bot/channel.test.ts
+        - src/config/schema-agent-endpoint.test.ts
+        - src/task/approval-contract.test.ts
+        - src/task/run-policy.test.ts
+        - src/task/approval-store.test.ts
+      replay_evidence:
+        - Critical contract-maintained source; replay is the gateway mode, interaction, and task policy harness.
+      hand_edit_guard: Update HITL contract invariants and approval-action harness before changing authority behavior.
+    stop_condition: Return to L0-L2 before adding new approval actions, risk levels, or authority-changing intent kinds.

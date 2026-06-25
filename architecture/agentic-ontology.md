@@ -1,0 +1,426 @@
+# Agentic Bridge Ontology
+
+Status: target architecture
+Scope: global architecture for a bounded interaction agent
+Date: 2026-05-29
+
+This document defines the target product architecture for an AI-native bridge.
+It is not a description of the current implementation. Future refactors should
+use this document as the product ontology target before moving code.
+
+## Core Thesis
+
+Agent-Interaction-Bridge should be treated as a bounded interaction agent, not
+as a traditional passive gateway with AI API calls.
+
+The bridge is the domain agent. It owns perception, context interpretation,
+memory retrieval, expression planning, multimodal transformation, delivery
+quality, and feedback learning. It does not own risky task execution.
+
+## Why A Bridge Agent Proxies Execution Agents
+
+The bridge does not exist to add a transport wrapper around an execution agent.
+It exists because the human-interaction problem and the task-execution problem
+have different objectives, risks, state, and capabilities.
+
+Execution agents are optimized for reasoning over tasks, using tools, editing
+files, running commands, and maintaining execution sessions. Human-facing
+surfaces need a different agentic layer: one that understands the speaker, the
+device, the channel, the available presentation forms, prior feedback,
+multimodal inputs, density budgets, and delivery quality.
+
+Directly exposing execution agents to human channels creates structural
+coupling:
+
+- channel payloads become mixed with execution prompts
+- presentation feedback becomes confused with task retry
+- multimodal perception becomes mixed with filesystem or shell authority
+- model helper resources look like endpoint capabilities
+- channel-specific UX leaks into endpoint session semantics
+- endpoint changes can break human-facing product behavior
+
+The bridge agent is therefore an anti-corruption layer, a capability governor,
+and a product interaction layer. It proxies execution agents by creating typed
+objects and bounded contracts between humans and executors:
+
+```text
+HumanTurn
+  -> Bridge Domain Agent
+     -> AgentTask
+        -> Execution Agent
+     <- AgentSignal
+  <- PresentationPlan / DeliveryPlan
+```
+
+This proxying is not pass-through forwarding. The bridge may perceive,
+summarize, retrieve memory, plan expression, generate artifacts, evaluate
+quality, and choose a delivery plan. It must not execute tools, approve risk,
+mutate endpoint profiles, or replace execution-agent judgment.
+
+## Agent Roles
+
+| Role | Responsibility | Authority |
+| --- | --- | --- |
+| Human Operator | Identity, credentials, publishing, exposure, product direction | Final authority |
+| Bridge Domain Agent | Understands turns, surfaces, expression needs, memories, and delivery quality | Product Runtime interaction authority |
+| Execution Agent | Reasons about tasks, uses tools, edits files, runs commands | Explicit endpoint profile authority |
+| Capability Provider | Supplies language, vision, embedding, image, voice, storage, or compute ability | No independent authority |
+
+## State Boundaries
+
+State must be explicit because the bridge is an agentic system. Hidden state is
+where product behavior, security boundaries, and debugging evidence become
+unreliable.
+
+State classes:
+
+| Class | Meaning | Rule |
+| --- | --- | --- |
+| `stateless` | No bridge-owned memory survives the call | Safe to retry from the same inputs |
+| `bounded-state` | State is scoped to turn, session, endpoint profile, message id, or short retry window | Must declare owner, key, and cleanup rule |
+| `durable-state` | State persists under runtime home or an explicit operator-provided store | Must be cataloged, auditable, and excluded from git |
+| `external-provider-state` | Opaque state held by a model, channel, or remote provider | Bridge must not rely on it for correctness |
+
+Runtime services own base capabilities such as profiles, resources, sessions,
+artifacts, vectors, and ActionLog storage. They are a support plane for runtime
+domains, not a shared memory surface between agents. Agents do not share raw
+resources, stores, provider handles, or sessions with each other.
+
+### Service State
+
+| Service | State class | State owner | Notes |
+| --- | --- | --- | --- |
+| Human channel receiver | `bounded-state` | Carrier adapter | Message ids, retries, and quoted context refs only |
+| Bridge orchestration runtime | `bounded-state` | Bridge runtime | In-flight turns, pending queues, process registry, scoped sessions |
+| SurfaceContext derivation | `stateless` | None | Pure interpretation of event metadata and channel capability |
+| Perception service | `stateless` by default | Capability boundary | May write artifacts only through ArtifactStore |
+| InteractionIntent classifier | `stateless` | Bridge domain agent | May call model helper; must return typed result |
+| ExpressionProfile planner | `stateless` with optional reads | Bridge domain agent | May read memory; writes decisions only through ActionLog |
+| Presentation planner | `stateless` with optional reads | Bridge domain agent | Lowers intent, expression, surface, policy, and resource state |
+| Carrier renderer | `stateless` | Carrier adapter | Pure lowering from DeliveryPlan to payload |
+| Carrier delivery adapter | `bounded-state` | Carrier adapter | Tracks send/update ids, retries, and delivery status |
+| Policy/profile resolver | `stateless` over durable config | Policy layer | Reads endpoint profile and operator config |
+| ActionLog service | `durable-state` | Runtime Services | Append-only decision and delivery evidence |
+| ArtifactStore | `durable-state` | Runtime Services | Artifact files plus metadata manifest |
+| Vector retrieval service | `durable-state` | Runtime Services | Vector-backed retrieval support state |
+| CapabilityCatalog | `durable-state` | Runtime Services | Declares available cognitive capabilities and module bindings |
+| ResourceCatalog | `durable-state` | Runtime Services | Declares required compute, storage, and model resources |
+| Execution endpoint adapter | `bounded-state` | Endpoint profile | App-server pools, exec invocations, and session handles |
+| Execution endpoint runtime | `durable-state` or `bounded-state` | Endpoint profile | Codex home, sessions, workspaces, approval state, process state |
+
+### Resource State
+
+| Resource | State class | Bridge rule |
+| --- | --- | --- |
+| Helper language model | `stateless` bridge call, possible `external-provider-state` | Do not rely on provider memory; require typed proposals |
+| Helper vision model | `stateless` bridge call, possible `external-provider-state` | Do not persist raw media unless ArtifactStore records it |
+| Helper embedding model | `stateless` bridge call, possible `external-provider-state` | Embedding output may enter VectorStore only through memory policy |
+| Helper image generation model | `stateless` bridge call, possible `external-provider-state` | Generated image becomes durable only after ArtifactStore commit |
+| Helper voice model | `stateless` bridge call, possible `external-provider-state` | Transcript/audio artifacts require explicit artifact policy |
+| Model provider credentials | `durable-state` | Encrypted runtime secret; never committed or exposed to endpoint capabilities |
+| Runtime config | `durable-state` | Local operator state under runtime home |
+| Secrets store | `durable-state` | Encrypted local state, never printed in normal diagnostics |
+| Artifact filesystem | `durable-state` | Runtime Services home only, with manifest metadata |
+| Artifact metadata manifest | `durable-state` | Runtime Services home only, audit-friendly metadata |
+| Vector index | `durable-state` | Runtime Services retrieval state; not endpoint session memory |
+| Vector fallback store | `durable-state` | Runtime Services retrieval state; not endpoint session memory |
+| Process registry | `bounded-state` with durable evidence | Runtime data | Operational status, not semantic memory |
+| Channel platform state | `external-provider-state` | Store only needed refs locally; do not assume channel keeps bridge semantics |
+| Execution agent session | `durable-state` or `bounded-state` | Endpoint profile state; not bridge helper-model memory |
+
+State inheritance is forbidden by default. A stateful bridge resource does not
+become execution-agent memory, and a stateful execution endpoint does not become
+bridge semantic memory unless policy maps it into a typed object. Runtime
+services may hold all stores in one operator home, but access is scoped by owner,
+key, and profile.
+
+## Topology
+
+```mermaid
+flowchart LR
+  human["Human"]
+  surface["Surface<br/>Feishu, Web, CLI, voice, watch"]
+  bridge["Bridge Domain Agent<br/>bounded interaction agent"]
+  endpoint["Execution Agent<br/>Codex exec, app-server, remote agent"]
+
+  human --> surface --> bridge
+  bridge -->|"AgentTask only"| endpoint
+  endpoint -->|"AgentSignal"| bridge
+  bridge -->|"PresentationPlan + DeliveryPlan"| surface
+```
+
+Runtime Services are the support plane for profiles, resources, sessions,
+ActionLog, artifacts, vectors, and other runtime state stores.
+
+## Ontology Objects
+
+### HumanTurn
+
+One inbound unit from a human surface.
+
+Fields:
+
+- `turnId`
+- `actorId`
+- `surfaceId`
+- `text`
+- `attachments`
+- `quotedContext`
+- `timestamp`
+- `rawCarrierRefs`
+
+Owns inbound facts only. It must not own interpretation or rendering.
+
+### SurfaceContext
+
+The environment where the turn happened and where the answer will be consumed.
+
+Fields:
+
+- `channel`: `feishu`, `web`, `cli`, `voice`, `mac`, `a2a`
+- `deviceClass`: `desktop`, `mobile`, `watch`, `voice_only`, `unknown`
+- `inputMode`: `text`, `voice`, `image`, `mixed`
+- `outputCapabilities`: text, markdown, card, html, image, file, voice
+- `densityBudget`: tiny, compact, normal, expanded
+- `interactionLatency`: realtime, async, batch
+
+Surface context is not user intent. A watch surface can force compact delivery
+without changing what the user asked.
+
+### InteractionIntent
+
+The meaning of the human turn as a conversational act.
+
+Allowed classes:
+
+- `task_request`
+- `presentation_feedback`
+- `retry_request`
+- `context_update`
+- `status_question`
+- `approval_response`
+- `correction`
+
+It must not decide card layout, HTML output, image generation, or execution
+authority.
+
+### PerceptionResult
+
+Structured interpretation of multimodal input.
+
+Examples:
+
+- screenshot summary
+- detected chart/table/UI state
+- voice transcript and confidence
+- attachment inventory
+- visual defects described by the user
+
+It may be generated by vision, speech, OCR, or language capabilities.
+
+### ExpressionProfile
+
+The semantic expression shape the content deserves before carrier rendering.
+
+Examples:
+
+- `architecture_explanation`
+- `project_progress_report`
+- `market_analysis`
+- `comparison`
+- `incident_review`
+- `timeline`
+- `decision_brief`
+- `watch_summary`
+- `voice_reply`
+- `artifact_preview`
+
+ExpressionProfile is where Dynamic UI belongs. It is independent of Feishu,
+Markdown, or any carrier payload.
+
+### Capability
+
+A bounded cognitive or execution capability.
+
+Capability categories:
+
+- `perception.language`
+- `perception.vision`
+- `perception.audio`
+- `memory.embedding`
+- `memory.vector_search`
+- `expression.transform`
+- `expression.image_generation`
+- `expression.voice_generation`
+- `quality.evaluation`
+- `execution.agent_endpoint`
+
+Each capability must declare:
+
+- input type
+- output type
+- state boundary
+- authority boundary
+- failure mode
+- audit fields
+
+### TypedProposal
+
+The only allowed output shape for bridge helper model judgment.
+
+Required fields:
+
+- `proposalType`
+- `schemaVersion`
+- `confidence`
+- `evidence`
+- `recommendedAction`
+- `rejectedAlternatives`
+- `policyNotes`
+
+Helper models may propose. Policy and deterministic planners decide.
+
+### PresentationPlan
+
+The channel-neutral display plan.
+
+Fields:
+
+- `expressionProfile`
+- `layout`
+- `sections`
+- `density`
+- `artifactRequests`
+- `fallback`
+- `qualityChecks`
+
+It must not own carrier send APIs or execution agent behavior.
+
+### DeliveryPlan
+
+The channel-specific plan created from a PresentationPlan and SurfaceContext.
+
+Fields:
+
+- `carrier`
+- `payloadKind`
+- `messageUpdateMode`
+- `artifactUploads`
+- `fallbackPayload`
+- `retryPolicy`
+
+### AgentTask
+
+A task delegated to an execution agent.
+
+Fields:
+
+- `taskId`
+- `instruction`
+- `endpointProfile`
+- `sessionScope`
+- `riskTags`
+- `approvalState`
+
+The bridge may create AgentTask objects, but it does not perform the execution
+itself.
+
+### AgentSignal
+
+Stable information emitted by the execution agent or bridge processing.
+
+Examples:
+
+- progress
+- final answer
+- artifact ready
+- risk approval required
+- failed
+- needs human input
+
+### ActionLog
+
+An audit object for decisions and state transitions.
+
+Records:
+
+- inbound turn
+- perception outputs
+- model capabilities used
+- typed proposals
+- planner decisions
+- policy gates
+- endpoint tasks
+- delivery result
+- user feedback
+
+ActionLog is the source for future learning and debugging.
+
+## Capability Governance
+
+| Capability | Allowed | Forbidden |
+| --- | --- | --- |
+| Language model | intent support, summarization, expression planning, quality evaluation | tool choice, shell execution, approval decisions |
+| Vision model | screenshot/image understanding, visual defect detection | filesystem or browser control |
+| Embedding model | memory retrieval, similar incident lookup, preference recall | endpoint memory injection without policy |
+| Image model | presentation artifacts | changing task result or claiming execution evidence |
+| Voice model | voice input/output transformation | identity, credential, or approval substitution |
+| Execution endpoint | task reasoning and tools under profile | carrier rendering, credential ownership |
+
+## Processing Loop
+
+```mermaid
+sequenceDiagram
+  participant H as Human
+  participant B as Bridge Domain Agent
+  participant E as Execution Agent
+  participant L as ActionLog
+
+  H->>B: HumanTurn
+  B->>B: Derive SurfaceContext
+  B->>B: Perception if needed
+  B->>B: Intent or expression proposal if needed
+  B->>B: Policy validation
+  alt needs execution
+    B->>E: AgentTask
+    E-->>B: AgentSignal
+  end
+  B->>B: PresentationPlan
+  B->>B: DeliveryPlan
+  B-->>H: Delivered response
+  B->>L: Decision and delivery record
+```
+
+## Design Rules
+
+1. Start with ontology objects, not handlers.
+2. Use models when the step requires perception, semantic judgment,
+   transformation, retrieval, generation, or quality evaluation.
+3. Require typed proposals from helper models.
+4. Validate every proposal against policy and surface capability.
+5. Keep execution authority behind explicit endpoint profiles.
+6. Record bridge decisions as ActionLog objects.
+7. Test the ontology transition, not only the rendered payload.
+
+## Palantir Concepts Adapted
+
+This architecture borrows the following ideas from Palantir's public Foundry
+and AIP documentation:
+
+- Ontology as operational layer, not just schema.
+- Objects, properties, links, actions, functions, and security as one operating
+  model.
+- Actions and action logs as auditable decision objects.
+- LLM functions with explicit inputs, outputs, evaluation, monitoring, and
+  permissions.
+
+It does not require copying Palantir's platform. The bridge needs a local,
+lightweight ontology that makes agent behavior explicit and testable.
+
+References:
+
+- https://www.palantir.com/docs/foundry/ontology/overview
+- https://www.palantir.com/docs/foundry/action-types/action-log
+- https://www.palantir.com/docs/foundry/logic/overview
+- https://www.palantir.com/docs/foundry/action-types/rules
+- https://www.palantir.com/docs/foundry/aip/overview

@@ -1,0 +1,113 @@
+schema_version: 1
+contracts:
+  - id: resources.architecture
+    title: Capability, resource, state, and architecture boundary
+    tier: contracted
+    risk_tags:
+      - schema
+      - generated-artifact
+    status: partial
+    l0:
+      owner: human
+      status: frozen
+      problem: Keep cognitive capabilities, missing resources, state boundaries, and durable architecture gates explicit.
+    l1:
+      owner: human
+      status: frozen
+      expression: CapabilityCatalog + external Runtime Services contract + state class -> product architecture boundary
+      paths:
+        - architecture/agentic-ontology.md
+    l2:
+      owner: human
+      status: frozen
+      path: architecture/contracts/resources-architecture.yaml
+      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      invariants:
+        - CapabilityCatalog describes cognitive abilities; Runtime Services describes whether operator-provided implementations exist.
+        - Missing resources are visible as Runtime Services `missing_resource` results and must not be masked by fallback prose.
+        - Every service or resource touched by agentic interaction changes must declare `stateless`, `bounded-state`, `durable-state`, or `external-provider-state`.
+        - Helper-model availability comes from explicit Runtime Services module selections and a configured env or keystore-backed key rather than a single mixed model slot.
+        - Language, embedding, and vision modules are configured together for future multimodal workflows, but each module remains independently addressable.
+        - Model resources are external Runtime Services cognitive helpers for perception, intent support, expression planning, embedding, indexing, artifact generation, and quality evaluation.
+        - Helper models must return typed proposals or typed artifacts; policy and deterministic planners decide whether they are used.
+        - Model resources must not be exposed as execution endpoint capabilities, override endpoint model/config/env, choose tools, execute work, or change authority.
+        - Local vector indexes are owned by Runtime Services, remain domain-agent retrieval support state, and must not be projected as execution endpoint memory.
+        - State inheritance is forbidden by default across bridge resources, carrier state, and execution endpoint sessions.
+        - Runtime Services own base resources as a support plane; bridge consumes typed service interfaces and must not share raw resources, stores, provider handles, or sessions.
+        - Bridge may pass caller-owned storage names to Runtime Services (`namespace` for artifacts/records and `tableName` for vectors), but the physical artifact store, record store, vector index, manifests, provider config, and keys remain Runtime Services assets.
+        - Bridge business code must depend only on `RuntimeServicesPort`, not on `/rpc`, MCP tools, provider clients, storage handles, or transport branches.
+        - Runtime Services owns the canonical capability registry and returns availability through `capabilities.describe` and resource status calls.
+        - Runtime Services context initialization must call `GET /health`, JSON-RPC `version`, JSON-RPC `capabilities.describe`, then JSON-RPC `resources.status` before normal capability calls.
+        - Current production Runtime Services access uses local JSON-RPC `/rpc`; preserved MCP code is future transport scaffolding, not the current resource path.
+        - Local `/rpc` maps capability id to method name directly; future remote MCP maps capability id to `runtime.<capabilityId>` tool names without bridge-owned resource definitions.
+        - Bridge must not expose secret or admin Runtime Services capabilities through `RuntimeServicesPort`.
+        - Bridge Runtime Services adapter must use local JSON-RPC `/rpc` for the current production path; tests may inject `RuntimeServicesPort` mocks, but production code must not create in-process Runtime Services instances.
+        - Durable implementation requires frozen registry records, devops index links, and harness evidence.
+        - Architecture docs must be included in the package.
+      generation_commands:
+        - cwd: .
+          command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/runtime-services/selector.test.ts src/runtime-services/policy.test.ts src/runtime-services/mcp-client.test.ts src/runtime-services/parity.test.ts src/runtime-services/discovery.test.ts src/signal/delivery-support-runtime-services.test.ts src/signal/delivery-support-executor.test.ts src/cli/commands/resources.test.ts src/cli/commands/storage.test.ts src/architecture/contract-check.test.ts
+          mode: check
+          writes_workspace: false
+          ci_required: true
+      generation_command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/runtime-services/selector.test.ts src/runtime-services/policy.test.ts src/runtime-services/mcp-client.test.ts src/runtime-services/parity.test.ts src/runtime-services/discovery.test.ts src/signal/delivery-support-runtime-services.test.ts src/signal/delivery-support-executor.test.ts src/cli/commands/resources.test.ts src/cli/commands/storage.test.ts src/architecture/contract-check.test.ts
+      drift_checks:
+        - agent-interaction-bridge architecture check
+      drift_check: agent-interaction-bridge architecture check
+    l3:
+      owner: agent
+      mode: durable
+      carriers:
+        - architecture
+        - src/runtime-services
+        - src/signal/delivery-support.ts
+        - src/architecture
+        - src/cli/commands/architecture.ts
+      commands:
+        - pnpm test
+        - pnpm typecheck
+        - pnpm build
+        - npm pack --dry-run
+        - pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/runtime-services/selector.test.ts src/runtime-services/policy.test.ts src/runtime-services/mcp-client.test.ts src/runtime-services/parity.test.ts src/runtime-services/discovery.test.ts src/signal/delivery-support-runtime-services.test.ts src/signal/delivery-support-executor.test.ts src/cli/commands/resources.test.ts src/cli/commands/storage.test.ts src/architecture/contract-check.test.ts
+        - agent-interaction-bridge resources
+        - agent-interaction-bridge architecture check
+        - agent-interaction-bridge architecture contracts
+    l4:
+      owner: agent
+      artifacts:
+        - src/runtime-services/port.ts
+        - src/runtime-services/types.ts
+        - src/runtime-services/policy.ts
+        - src/runtime-services/resources.ts
+        - src/runtime-services/rpc-client.ts
+        - src/runtime-services/mcp-client.ts
+        - src/runtime-services/selector.ts
+        - src/runtime-services/mappings.ts
+        - src/signal/delivery-support.ts
+        - src/cli/commands/resources.ts
+        - src/cli/commands/models.ts
+        - src/cli/commands/storage.ts
+        - src/cli/commands/architecture.ts
+        - src/architecture/contract-check.ts
+        - src/architecture/contract-registry.ts
+        - architecture/contracts
+      ai_contract_index: agent-devops/ai-contract-index.md
+      harness:
+        - src/runtime-services/selector.test.ts
+        - src/runtime-services/policy.test.ts
+        - src/runtime-services/resources.test.ts
+        - src/runtime-services/mcp-client.test.ts
+        - src/runtime-services/parity.test.ts
+        - src/runtime-services/discovery.test.ts
+        - src/signal/delivery-support-runtime-services.test.ts
+        - src/signal/delivery-support-executor.test.ts
+        - src/cli/commands/resources.test.ts
+        - src/cli/commands/models.test.ts
+        - src/cli/commands/storage.test.ts
+        - src/cli/commands/architecture.test.ts
+        - src/architecture/contract-check.test.ts
+        - src/architecture/contract-registry.test.ts
+      replay_evidence:
+        - Contract-maintained RuntimeServicesPort, JSON-RPC adapter, future MCP naming/transport scaffolding, secret/admin port guard, and architecture harness; Runtime Services implementation and capability registry have their own repository gates.
+      hand_edit_guard: Update resource or architecture contract before changing Runtime Services availability or typed-result semantics.
+    stop_condition: Return to L0-L2 before treating a Runtime Services capability as bridge-owned or as an execution-agent capability.

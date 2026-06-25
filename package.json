@@ -1,0 +1,82 @@
+{
+  "name": "agent-interaction-bridge",
+  "version": "0.1.0",
+  "description": "Local-first bounded interaction bridge for human surfaces and execution agents",
+  "type": "module",
+  "bin": {
+    "agent-interaction-bridge": "./bin/agent-interaction-bridge.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "architecture",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudsbeyond/agent-interaction-bridge.git"
+  },
+  "homepage": "https://github.com/cloudsbeyond/agent-interaction-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/cloudsbeyond/agent-interaction-bridge/issues"
+  },
+  "scripts": {
+    "dev": "tsup --watch",
+    "public-safety-check": "node tools/public-safety-check.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.64.0",
+    "commander": "^12.1.0",
+    "https-proxy-agent": "^9.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "protobufjs"
+    ],
+    "overrides": {
+      "rollup": "npm:@rollup/wasm-node@4.60.2"
+    }
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "codex",
+    "codex-cli",
+    "agent",
+    "agent-runtime",
+    "gateway",
+    "human-in-the-loop",
+    "hitl",
+    "interaction",
+    "signal-routing",
+    "cli",
+    "channel",
+    "bridge"
+  ],
+  "license": "MIT"
+}

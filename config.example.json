@@ -1,0 +1,40 @@
+{
+  "accounts": {
+    "app": {
+      "id": "cli_xxxxxxxxxxxxxxxx",
+      "secret": { "source": "env", "id": "FEISHU_APP_SECRET" },
+      "tenant": "feishu"
+    }
+  },
+  "preferences": {
+    "gatewayMode": "adapter",
+    "agentProfile": "agent_profile.codex_host",
+    "appServerCwd": "~/Documents/Codex/app-server",
+    "messageReply": "text",
+    "turnTrace": {
+      "enabled": false,
+      "artifactNamespace": "agent-interaction-bridge.turn-traces"
+    },
+    "replyMentionTargets": [
+      {
+        "name": "Example Bot",
+        "id": "cli_xxxxxxxxxxxxxxxx",
+        "key": "@example_bot"
+      }
+    ],
+    "requireApprovalBeforeRun": false,
+    "approvalKeywords": ["/approve", "/审批"],
+    "approvalModels": [],
+    "access": {
+      "allowedUsers": [],
+      "allowedChats": [],
+      "admins": []
+    }
+  },
+  "runtimeServices": {
+    "artifact_namespace": "agent-interaction-bridge",
+    "vector_tableName": "agent_interaction_bridge_vectors",
+    "record_namespace": "agent-interaction-bridge",
+    "record_tableName": "agent_interaction_bridge_records"
+  }
+}

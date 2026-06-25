@@ -1,0 +1,104 @@
+schema_version: 1
+contracts:
+  - id: core.public_api
+    title: Core topology and public API
+    tier: contracted
+    risk_tags:
+      - api
+      - generated-artifact
+    status: partial
+    l0:
+      owner: human
+      status: frozen
+      problem: Expose only stable ontology, boundary, and framework contracts while keeping implementation details private.
+    l1:
+      owner: human
+      status: frozen
+      expression: ontology and framework entities -> public exports -> downstream smoke tools
+      paths:
+        - architecture/system-design.md
+        - architecture/agentic-ontology.md
+    l2:
+      owner: human
+      status: frozen
+      path: architecture/contracts/core-public-api.yaml
+      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      invariants:
+        - Public exports are framework contracts, not incidental implementation reach.
+        - Provider payload types stay behind adapter boundaries unless explicitly promoted.
+        - Public API should expose ontology-level contracts only when they are stable enough for downstream use; internal provider payloads, runtime secrets, and endpoint authority remain private.
+        - Config examples show shape only and never become runtime state.
+      public_export_sources:
+        - ./agent
+        - ./agent/profile-policy
+        - ./architecture/contract-check
+        - ./architecture/contract-registry
+        - ./bot/channel
+        - ./card/chat-markdown
+        - ./card/chat-presentation-contract
+        - ./card/run-renderer
+        - ./card/run-state
+        - ./card/text-renderer
+        - ./cli/commands/registry
+        - ./interaction/intent
+        - ./presentation/capabilities
+        - ./presentation/document
+        - ./presentation/renderers/feishu-card
+        - ./presentation/renderers/html
+        - ./presentation/renderers/markdown
+        - ./presentation/templates
+        - ./runtime/data-contract
+        - ./runtime/interaction-runtime
+        - ./signal/channels
+        - ./signal/delivery-support
+        - ./signal/mac-notifier
+        - ./signal/presentation
+        - ./signal/router
+        - ./signal/run-presentation
+        - ./signal/timeline
+        - ./signal/tool-events
+        - ./task/approval-contract
+        - ./topology/entities
+      generation_commands:
+        - cwd: .
+          command: pnpm test -- src/architecture/public-api-contract.test.ts
+          mode: check
+          writes_workspace: false
+          ci_required: true
+        - cwd: .
+          command: pnpm build
+          mode: check
+          writes_workspace: true
+          ci_required: true
+      generation_command: pnpm test -- src/architecture/public-api-contract.test.ts && pnpm build
+      drift_checks:
+        - agent-interaction-bridge architecture check
+      drift_check: agent-interaction-bridge architecture check
+    l3:
+      owner: agent
+      mode: durable
+      carriers:
+        - src/index.ts
+        - src/topology/entities.ts
+        - config.example.json
+      commands:
+        - pnpm test -- src/architecture/public-api-contract.test.ts
+        - pnpm typecheck
+        - pnpm build
+    l4:
+      owner: agent
+      artifacts:
+        - src/index.ts
+        - src/architecture/public-api-contract.ts
+        - src/topology/entities.ts
+        - config.example.json
+      ai_contract_index: agent-devops/ai-contract-index.md
+      harness:
+        - src/topology/entities.test.ts
+        - src/architecture/public-api-contract.test.ts
+        - pnpm typecheck
+        - pnpm build
+      replay_evidence:
+        - Public API is contract-maintained; replay is public-api-contract test plus build.
+      hand_edit_guard: Update public_export_sources before changing src/index.ts exports.
+    stop_condition: Return to L0-L2 before exporting new provider-specific or authority-bearing APIs.

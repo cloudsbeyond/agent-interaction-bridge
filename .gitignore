@@ -1,0 +1,34 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+.idea/
+.vscode/
+.alphaX/
+
+# Internal-only: dev smoke scripts and full changelog stay local, do not ship
+scripts/
+CHANGELOG.md
+
+# Local bridge runtime/config data
+.agent-interaction-bridge/
+bridge-data/
+config.json
+model-providers.json
+secrets.enc
+sessions.json
+workspaces.json
+processes.json
+media/
+artifacts/
+db/
+vector/
+logs/
+debug-*.md

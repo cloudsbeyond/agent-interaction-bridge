@@ -1,0 +1,90 @@
+schema_version: 1
+contracts:
+  - id: runtime.data
+    title: Runtime state and local operator data
+    tier: critical
+    risk_tags:
+      - persistence
+      - security
+    status: partial
+    l0:
+      owner: human
+      status: frozen
+      problem: Keep local runtime state operational but outside git, with explicit authority and cleanup boundaries.
+    l1:
+      owner: human
+      status: frozen
+      expression: state class -> owner/key/lifetime -> bridge config, secrets, sessions, process registry, service lifecycle, and external Runtime Services handoff
+      paths:
+        - architecture/system-design.md
+        - architecture/agentic-ontology.md
+    l2:
+      owner: human
+      status: frozen
+      path: architecture/contracts/runtime-data.yaml
+      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      invariants:
+        - Runtime data under the local app home must never be committed.
+        - Secret values are never printed, stored in git, or exposed through status surfaces.
+        - Runtime-owned data must be classified as `bounded-state`, `durable-state`, or `external-provider-state`; model helper calls remain stateless from the bridge contract perspective.
+        - Stateful bridge runtime data must declare owner, key, lifetime, cleanup rule, and whether execution endpoints can see the state.
+        - Model provider config, shared model API keys, generated delivery artifacts, storage manifests, and vector indexes are Runtime Services data and live under the Runtime Services home.
+        - Bridge config may store only caller-owned Runtime Services names (`runtimeServices.artifact_namespace`, `runtimeServices.vector_tableName`, `runtimeServices.record_namespace`, and `runtimeServices.record_tableName`); it must not store Runtime Services provider catalogs, model keys, artifact manifests, vector stores, or storage implementations.
+        - Runtime Services data must stay outside git and outside the bridge runtime home by default.
+        - Vector indexes are Runtime Services retrieval state and must not be treated as execution endpoint session memory.
+        - Execution endpoint sessions are endpoint-profile state, not bridge semantic memory.
+        - Runtime Services may support many domain agents, but access must be typed and raw state must not be reused across agents.
+        - Provider-side logs or model memory are external-provider-state and must not be trusted for bridge correctness.
+        - LaunchAgent is a macOS runtime adapter, not a generic architecture primitive.
+      generation_commands:
+        - cwd: .
+          command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+          mode: check
+          writes_workspace: false
+          ci_required: true
+      generation_command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+      drift_checks:
+        - agent-interaction-bridge architecture check
+      drift_check: agent-interaction-bridge architecture check
+    l3:
+      owner: agent
+      mode: durable
+      carriers:
+        - src/config
+        - src/session
+        - src/workspace/store.ts
+        - src/runtime/registry.ts
+        - src/runtime/launch-agent.ts
+        - src/runtime/data-contract.ts
+      commands:
+        - pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+        - pnpm typecheck
+    l4:
+      owner: agent
+      artifacts:
+        - src/config/paths.ts
+        - src/config/schema.ts
+        - src/config/store.ts
+        - src/config/keystore.ts
+        - src/config/secret-resolver.ts
+        - src/session/store.ts
+        - src/session/history.ts
+        - src/workspace/store.ts
+        - src/runtime/registry.ts
+        - src/runtime/launch-agent.ts
+        - src/runtime/data-contract.ts
+        - src/runtime-services/selector.ts
+        - src/bot/process-pool.ts
+        - src/bot/active-runs.ts
+      ai_contract_index: agent-devops/ai-contract-index.md
+      harness:
+        - src/config/paths.test.ts
+        - src/config/schema-agent-endpoint.test.ts
+        - src/session/store.test.ts
+        - src/runtime/launch-agent.test.ts
+        - src/runtime/data-contract.test.ts
+        - src/runtime-services/selector.test.ts
+      replay_evidence:
+        - Critical contract-maintained source; replay is runtime data harness plus architecture check.
+      hand_edit_guard: Update runtime-data contract before changing persistence, secret, or LaunchAgent semantics.
+    stop_condition: Return to L0-L2 when bridge runtime files, secrets, Runtime Services handoff, or service behavior change authority or persistence semantics.

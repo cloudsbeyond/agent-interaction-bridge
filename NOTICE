@@ -1,0 +1,18 @@
+Agent-Interaction-Bridge
+
+This project is forked from:
+
+  zarazhangrui/feishu-claude-code-bridge
+  https://github.com/zarazhangrui/feishu-claude-code-bridge
+
+The upstream project is distributed under the MIT License with the copyright
+notice "Copyright (c) 2026 Lark Channel Bridge contributors".
+
+Agent-Interaction-Bridge keeps that upstream notice in LICENSE and adds its own
+MIT copyright notice for the rewritten project.
+
+Reference project studied for current-path product patterns; no code is copied
+from it in this repository:
+
+  hachiwii/twinny
+  https://github.com/hachiwii/twinny
