@@ -14,6 +14,7 @@ import {
 export interface ArchitectureContractInputs {
   agents: string;
   readme: string;
+  prd: string;
   architectureReadme: string;
   agentDevopsReadme: string;
   systemDesign: string;
@@ -24,6 +25,7 @@ export interface ArchitectureContractInputs {
   packageJson: {
     files?: unknown;
     description?: unknown;
+    scripts?: unknown;
   };
   publicApi: PublicApiContractInputs;
 }
@@ -40,6 +42,8 @@ const TEXT_NON_CODE_EXTENSIONS = new Set(['', '.json', '.md', '.txt', '.yaml', '
 const LEGACY_DEVOPS_PATH_RE =
   /\barchitecture\/(?:ai-contract-index|requirements-to-code-chain|sops)(?:[/.]|\b)/;
 const LEGACY_GATEWAY_MODE_RE = /\b(?:transparent_proxy|human_agent_adapter|interactionMode)\b/;
+const SOURCE_METHOD_LEAKAGE_RE =
+  /\b(?:source[- ]side method|execution-context detail|agent[- ]host|source[- ]function|selected workflow|selected skill|target runtime external method|agent runtime external method|runtime dependency on source|devops dependency on source|l0_refs|l1_l2_refs|l3_refs|l4_validation)\b/i;
 
 export interface ArchitectureContractCheck {
   id: string;
@@ -162,7 +166,7 @@ export function checkArchitectureContracts(
     check(
       'docs.freeze_layer_roles',
       hasFreezeLayerRoles(inputs),
-      'first-layer docs keep AGENTS, README, architecture, and agent-devops responsibilities explicit',
+      'first-layer docs keep AGENTS, README, PRD, architecture, and agent-devops responsibilities explicit',
     ),
     check(
       'docs.freeze_layer_diagrams_simple',
@@ -190,6 +194,11 @@ export function checkArchitectureContracts(
       'non-code docs use Agent DevOps terminology instead of old build-time label',
     ),
     check(
+      'docs.no_source_method_leakage',
+      inputs.nonCodeProjectTexts.every((text) => !SOURCE_METHOD_LEAKAGE_RE.test(text)),
+      'non-code docs do not describe source-side methods as product/runtime dependencies',
+    ),
+    check(
       'registry.l1_paths_product_only',
       inputs.contractRegistry.contracts.every((contract) =>
         contract.l1.paths.every((path) => !path.startsWith('agent-devops/')),
@@ -213,6 +222,12 @@ export function checkArchitectureContracts(
       'package files include architecture/',
     ),
     check(
+      'package.prd_included',
+      Array.isArray(inputs.packageJson.files) &&
+        inputs.packageJson.files.includes('PRD.md'),
+      'package files include PRD.md',
+    ),
+    check(
       'package.agent_devops_excluded',
       Array.isArray(inputs.packageJson.files) &&
         !inputs.packageJson.files.includes('agent-devops'),
@@ -231,6 +246,11 @@ export function checkArchitectureContracts(
         !inputs.packageJson.description.includes('gateway'),
       'package description follows frozen product positioning',
     ),
+    check(
+      'package.prepublish_runs_package_dry_run',
+      packageScript(inputs, 'prepublishOnly').includes('npm pack --dry-run'),
+      'prepublish gate runs package dry-run evidence',
+    ),
   ];
   const failures = checks.filter((item) => !item.passed).map((item) => item.id);
   return {
@@ -244,6 +264,7 @@ export function readArchitectureContractInputs(rootDir = process.cwd()): Archite
   return {
     agents: readFileSync(join(rootDir, 'AGENTS.md'), 'utf8'),
     readme: readFileSync(join(rootDir, 'README.md'), 'utf8'),
+    prd: readFileSync(join(rootDir, 'PRD.md'), 'utf8'),
     architectureReadme: readFileSync(join(rootDir, 'architecture', 'README.md'), 'utf8'),
     agentDevopsReadme: readFileSync(join(rootDir, 'agent-devops', 'README.md'), 'utf8'),
     systemDesign: readFileSync(join(rootDir, 'architecture', 'system-design.md'), 'utf8'),
@@ -254,9 +275,17 @@ export function readArchitectureContractInputs(rootDir = process.cwd()): Archite
     packageJson: JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8')) as {
       files?: unknown;
       description?: unknown;
+      scripts?: unknown;
     },
     publicApi: readPublicApiContractInputs(rootDir),
   };
+}
+
+function packageScript(inputs: ArchitectureContractInputs, name: string): string {
+  const scripts = inputs.packageJson.scripts;
+  if (!scripts || typeof scripts !== 'object') return '';
+  const value = (scripts as Record<string, unknown>)[name];
+  return typeof value === 'string' ? value : '';
 }
 
 export function formatArchitectureCheck(result: ArchitectureContractCheckResult): string {
@@ -329,14 +358,24 @@ function hasFreezeLayerRoles(inputs: ArchitectureContractInputs): boolean {
   return (
     inputs.agents.includes('## Freeze Layer') &&
     inputs.agents.includes('README.md') &&
+    inputs.agents.includes('PRD.md') &&
     inputs.agents.includes('architecture/README.md') &&
     inputs.agents.includes('agent-devops/README.md') &&
-    inputs.readme.includes('product positioning') &&
+    inputs.readme.includes('human-facing product narrative') &&
+    inputs.readme.includes('PRD.md') &&
     inputs.readme.includes('architecture/system-design.md') &&
     inputs.readme.includes('agent-devops/') &&
+    inputs.prd.includes('## P0 Scope') &&
+    inputs.prd.includes('## Downstream Chain') &&
+    inputs.prd.includes('## Owner Boundary') &&
+    inputs.prd.includes('README.md / PRD.md') &&
     inputs.architectureReadme.includes('product and system architecture') &&
+    inputs.architectureReadme.includes('../PRD.md') &&
+    inputs.architectureReadme.includes('must not redefine product intent') &&
     inputs.architectureReadme.includes('agent-devops/') &&
     inputs.agentDevopsReadme.includes('not included in the npm package') &&
+    inputs.agentDevopsReadme.includes('product narrative, PRD') &&
+    inputs.agentDevopsReadme.includes('does not own product L0 intent') &&
     inputs.agentDevopsReadme.includes('Part 1 runtime code') &&
     inputs.agentDevopsReadme.includes('product harness commands')
   );
@@ -356,11 +395,8 @@ function hasMermaidSubgraph(text: string): boolean {
 }
 
 function hasInvisibleLocalContextMention(text: string): boolean {
-  const privateMarker = invisibleLocalContextName();
   const privateDirMarker = invisibleLocalContextDirName();
-  return [privateDirMarker, privateMarker].some((marker) =>
-    text.toLowerCase().includes(marker.toLowerCase()),
-  );
+  return text.toLowerCase().includes(privateDirMarker.toLowerCase());
 }
 
 function invisibleLocalContextName(): string {

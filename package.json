@@ -16,6 +16,7 @@
     "dist",
     "bin",
     "architecture",
+    "PRD.md",
     "README.md",
     "LICENSE",
     "NOTICE"
@@ -34,7 +35,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build"
+    "prepublishOnly": "pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.64.0",

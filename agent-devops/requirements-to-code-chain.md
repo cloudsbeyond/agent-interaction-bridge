@@ -4,6 +4,10 @@ This is the durable development protocol for agent-maintained repository work.
 It belongs to part 2 of the repository: AI-native build governance and harness.
 Product runtime code must not load this file.
 
+Product L0 intent lives in `../README.md` and the equivalent formal projection
+in `../PRD.md`. This file is downstream governance for agent-maintained L3/L4
+work and must not act as product authority.
+
 Use it for code generation, generated artifact maintenance, SDK/DTO/index
 generation, framework-boundary changes, package metadata gates, and replay
 harness changes.
@@ -27,7 +31,7 @@ Durable implementation may start or remain only when all conditions are true:
 - generation, contract, or replay harness evidence exists
 
 If the gate fails, the agent may produce drafts, questions, review packets, or
-spec-completion proposals, but must not preserve durable implementation.
+contract-completion proposals, but must not preserve durable implementation.
 
 ## Ownership
 
@@ -104,10 +108,10 @@ Risk tags include `schema`, `api`, `generated-artifact`,
 
 | Layer | Owner | Required Evidence |
 | --- | --- | --- |
-| `L0` | Human | Goal, scenario, stable constraints, open questions |
+| `L0` | Human | `README.md` product narrative and `PRD.md` formal projection: goal, scenario, stable constraints, open questions |
 | `L1` | Human | Reviewable DSL, Figma, flow, state model, or equivalent structure |
 | `L2` | Human | YAML, OpenAPI, JSON Schema, registry, or equivalent contract |
-| `L3` | Build Agent | AGENTS, specs, skills, repo boundaries, commands, test plan |
+| `L3` | Build Agent | AGENTS, PRD/contract links, skills, repo boundaries, commands, test plan |
 | `L4` | Build Agent | Code, pages, DTOs, SDKs, indexes, docs, replay evidence, AI Contract Index links |
 
 L3-L4 must return to L0-L2 when it finds an unimplementable contract, unstable
@@ -139,12 +143,12 @@ Allowed actions: `approve-freeze`, `request-clarification`,
 ## Canonical Preflight Fields
 
 ```text
-L0 Problem Definition: <human-owned goal / scenario / constraints / open questions>
+L0 Problem Definition: <human-owned goal / scenario / constraints / open questions, normally summarized in README.md and PRD.md>
 L1 Structured Expression: <DSL / Figma / flow / state model / equivalent>
 L2 Contract Source: <YAML / OpenAPI / JSON Schema / registry / equivalent>
 L2 Freeze Signal: <review / commit / version / accepted invariants / drift check>
 L0-L2 Status: <draft | frozen>
-L3 Engineering Carrier: <AGENTS / spec / skill / repo boundary / commands>
+L3 Engineering Carrier: <AGENTS / PRD and contract links / skill / repo boundary / commands>
 L3-L4 Mode: <draft | durable>
 L4 Maintained Artifacts: <code / page / DTO / SDK / index / docs>
 AI Contract Index: <how L4 links back to L1/L2>

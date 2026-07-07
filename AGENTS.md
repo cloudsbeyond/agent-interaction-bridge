@@ -10,8 +10,10 @@ authority_boundary: humans own identity, credentials, publishing, and exposure
 
 ## Repo Map
 
-- Product overview, installation, operator commands, and open-source usage live
-  in [README.md](./README.md).
+- Product narrative, installation, operator commands, and open-source usage
+  live in [README.md](./README.md).
+- The equivalent formal L0 projection, P0 scope, non-goals, downstream chain,
+  and owner boundary live in [PRD.md](./PRD.md).
 - Product runtime architecture, ontology, system design, and product contracts
   live in [architecture/](./architecture/).
 - Agent development process, repo governance, contract indexing, drift checks,
@@ -19,17 +21,18 @@ authority_boundary: humans own identity, credentials, publishing, and exposure
 - Runtime config and local state belong outside git.
 
 The product runtime must not import, load, or require `agent-devops/`. The
-devops area may index product contracts, source files, and harness commands as
-development evidence.
+devops area may index product narrative, PRD, contracts, source files, and
+harness commands as development evidence.
 
 ## Freeze Layer
 
-Treat root `AGENTS.md`, root `README.md`, `architecture/README.md`, and
-`agent-devops/README.md` as the first documentation layer to keep mutually
+Treat root `AGENTS.md`, root `README.md`, `PRD.md`, `architecture/README.md`,
+and `agent-devops/README.md` as the first documentation layer to keep mutually
 consistent.
 
 - `AGENTS.md` routes agents and records repo-wide operating constraints.
-- `README.md` is the product and open-source usage entrypoint.
+- `README.md` and `PRD.md` jointly carry L0 product intent before architecture contracts or devops indexes.
+- `README.md` is the product narrative and open-source usage entrypoint.
 - `architecture/README.md` is the product architecture entrypoint.
 - `agent-devops/README.md` is the AI-native build governance and harness
   entrypoint.
@@ -37,6 +40,28 @@ consistent.
 Do not put complex architecture diagrams in this first layer. If a diagram
 needs nested subgraphs or mixes product runtime with devops governance, split it
 into smaller diagrams in the relevant deeper document.
+
+## Formal Development Flow
+
+Use this in-repo L0-L4 chain as the portable development contract. Do not
+drive durable runtime or `agent-devops/` changes from repo-external process
+notes alone. Product runtime and agent-devops governance are related but separate
+layers:
+
+```text
+README.md / PRD.md
+  -> architecture/README.md
+  -> architecture/agentic-ontology.md + architecture/system-design.md
+  -> architecture/contracts/*.yaml
+  -> src/ + bin/ + package metadata
+  -> tests + public-safety + architecture checks + package evidence
+```
+
+- L0: `README.md` and `PRD.md` carry product intent, P0 scope, non-goals, and owner boundary.
+- L1/L2: architecture docs, ontology, system design, and YAML contracts freeze object boundaries, authority, state, and carrier contracts.
+- L3: TypeScript runtime modules, CLI commands, carrier adapters, presentation/rendering code, and package contents realize those contracts.
+- L4: tests, public-safety checks, architecture contract checks, typecheck, build, and package dry-run provide validation evidence; they do not approve Feishu/Lark binding, credentials, npm publication, or remote exposure.
+- `agent-devops/` may index L1-L4 evidence for build governance, but it does not own product L0 and must not become a runtime dependency.
 
 ## Product Invariants
 
