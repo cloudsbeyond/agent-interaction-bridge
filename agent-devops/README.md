@@ -3,15 +3,16 @@
 This directory is the AI-native development system for this repository. It is
 repo-published but not included in the npm package.
 
-Part 1 of the repository is the product package: source, CLI, product
-architecture, product contracts, product tests, product harness scripts, and
-open-source usage docs. Part 2 is this directory: build governance, contract
-indexing, drift checks, and governance/replay harness guidance for
+Part 1 of the repository is the product package: product narrative, PRD,
+source, CLI, product architecture, product contracts, product tests, product
+harness scripts, and open-source usage docs. Part 2 is this directory: build
+governance, contract indexing, drift checks, and governance/replay harness guidance for
 agent-maintained work.
 
 Part 1 runtime code, public API, and npm package contents must not depend on
-this directory. This directory may index part 1 contracts, source files, tests,
-package metadata, and product harness commands as development evidence.
+this directory. This directory may index part 1 product narrative, PRD,
+contracts, source files, tests, package metadata, and product harness commands
+as development evidence. It does not own product L0 intent.
 
 ## Files
 

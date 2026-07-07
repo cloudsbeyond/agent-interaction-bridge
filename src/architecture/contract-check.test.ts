@@ -12,11 +12,13 @@ const validInputs: ArchitectureContractInputs = {
     '## Freeze Layer',
     'AGENTS.md routes agents.',
     'README.md is product entry.',
+    'PRD.md is formal product projection.',
     'architecture/README.md is architecture entry.',
     'agent-devops/README.md is devops entry.',
   ].join('\n'),
   readme: [
-    'product positioning',
+    'human-facing product narrative',
+    'PRD.md',
     'architecture/system-design.md',
     'agent-devops/',
     '## Gateway Modes',
@@ -29,12 +31,22 @@ const validInputs: ArchitectureContractInputs = {
     'flowchart LR',
     '```',
   ].join('\n'),
+  prd: [
+    '## P0 Scope',
+    '## Downstream Chain',
+    'README.md / PRD.md',
+    '## Owner Boundary',
+  ].join('\n'),
   architectureReadme: [
     'product and system architecture',
+    '../PRD.md',
+    'must not redefine product intent',
     'agent-devops/',
   ].join('\n'),
   agentDevopsReadme: [
     'not included in the npm package',
+    'product narrative, PRD',
+    'does not own product L0 intent',
     'Part 1 runtime code',
     'product harness commands',
   ].join('\n'),
@@ -139,7 +151,10 @@ const validInputs: ArchitectureContractInputs = {
   },
   packageJson: {
     description: 'Local-first bounded interaction bridge for human surfaces and execution agents',
-    files: ['dist', 'bin', 'architecture', 'README.md'],
+    files: ['dist', 'bin', 'architecture', 'PRD.md', 'README.md'],
+    scripts: {
+      prepublishOnly: 'pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts',
+    },
   },
   publicApi: {
     indexSource: "export { renderText } from './card/text-renderer';",
@@ -192,6 +207,16 @@ describe('architecture contract check', () => {
     expect(result.failures).toContain('package.agents_excluded');
   });
 
+  test('rejects package configs that omit the root PRD', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      packageJson: { files: ['dist', 'bin', 'architecture', 'README.md'] },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('package.prd_included');
+  });
+
   test('rejects durable implementation without required registry contracts', () => {
     const result = checkArchitectureContracts({
       ...validInputs,
@@ -242,6 +267,16 @@ describe('architecture contract check', () => {
     expect(result.failures).toContain('docs.freeze_layer_roles');
   });
 
+  test('rejects first-layer docs that omit the root PRD chain', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      prd: validInputs.prd.replace('README.md / PRD.md', 'architecture-only chain'),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('docs.freeze_layer_roles');
+  });
+
   test('rejects nested subgraphs in first-layer docs', () => {
     const result = checkArchitectureContracts({
       ...validInputs,
@@ -256,7 +291,7 @@ describe('architecture contract check', () => {
     const privateMarker = String.fromCharCode(46, 97, 108, 112, 104, 97, 88);
     const result = checkArchitectureContracts({
       ...validInputs,
-      nonCodeProjectTexts: [...validInputs.nonCodeProjectTexts, `${privateMarker} local context`],
+      nonCodeProjectTexts: [...validInputs.nonCodeProjectTexts, `${privateMarker}/project-context.md`],
     });
 
     expect(result.ok).toBe(false);
@@ -302,6 +337,19 @@ describe('architecture contract check', () => {
     expect(result.failures).toContain('docs.no_legacy_build_time_label');
   });
 
+  test('rejects non-code docs that leak source-side method context into product assets', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      nonCodeProjectTexts: [
+        ...validInputs.nonCodeProjectTexts,
+        'target runtime external method is required before contributors can use this package',
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('docs.no_source_method_leakage');
+  });
+
   test('rejects product L1 contracts that point to agent devops docs', () => {
     const result = checkArchitectureContracts({
       ...validInputs,
@@ -334,6 +382,21 @@ describe('architecture contract check', () => {
 
     expect(result.ok).toBe(false);
     expect(result.failures).toContain('package.description_product_boundary');
+  });
+
+  test('rejects publish gates that omit package dry-run evidence', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      packageJson: {
+        ...validInputs.packageJson,
+        scripts: {
+          prepublishOnly: 'pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build',
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('package.prepublish_runs_package_dry_run');
   });
 
   test('rejects wide left-to-right topology charts in system design', () => {
@@ -389,10 +452,14 @@ describe('architecture contract check', () => {
     expect(output).toContain('docs.system_design_no_wide_flowcharts');
     expect(output).toContain('docs.system_design_object_flow_compact');
     expect(output).toContain('package.architecture_included');
+    expect(output).toContain('package.prd_included');
     expect(output).toContain('package.agent_devops_excluded');
+    expect(output).toContain('package.prepublish_runs_package_dry_run');
   });
 
   test('accepts the repository architecture contracts', () => {
-    expect(checkArchitectureContracts(readArchitectureContractInputs()).ok).toBe(true);
+    const result = checkArchitectureContracts(readArchitectureContractInputs());
+    expect(result.failures).toEqual([]);
+    expect(result.ok).toBe(true);
   });
 });

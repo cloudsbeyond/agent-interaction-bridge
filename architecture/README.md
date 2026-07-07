@@ -5,6 +5,10 @@ Agent-Interaction-Bridge. It describes the runtime objects, channel boundaries,
 execution endpoint boundaries, Runtime Services boundary, and product-facing
 contracts that are useful to open-source users and contributors.
 
+The product L0 assets are [../README.md](../README.md) and
+[../PRD.md](../PRD.md). Architecture contracts in this directory are downstream
+L1/L2 assets and must not redefine product intent.
+
 ## Files
 
 - [agentic-ontology.md](./agentic-ontology.md): target product ontology for

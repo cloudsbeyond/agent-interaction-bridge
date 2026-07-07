@@ -9,6 +9,12 @@ The current product path connects Feishu/Lark to a local Codex execution
 endpoint. Future surfaces can use the same bridge boundary without inheriting
 Feishu/Lark transport details or Codex-specific session semantics.
 
+This `README.md` is the human-facing product narrative. [`PRD.md`](./PRD.md)
+is the fixed equivalent formal L0 projection: it compresses the same product intent,
+P0 scope, non-goals, downstream chain, and owner boundary before architecture
+contracts, agent-devops indexes, runtime objects, CLI commands, carrier
+adapters, or channel rendering code are changed.
+
 Runtime path:
 
 ```mermaid
@@ -106,7 +112,8 @@ session is degraded to relay and the channel is notified.
 ## Architecture Contracts
 
 Product architecture details, YAML contract records, and layer contracts live
-in [architecture/](./architecture/).
+in [architecture/](./architecture/). They are downstream of the README product
+narrative and `PRD.md`; they should not redefine L0 product intent.
 
 - `HumanTurn`: inbound human facts, not interpretation or rendering.
 - `SurfaceContext`: channel, device, input mode, output capabilities, and
