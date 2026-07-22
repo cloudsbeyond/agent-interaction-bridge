@@ -36,6 +36,7 @@ import { setSecret } from '../config/keystore';
 import { buildEncryptedAccountConfig, saveConfig } from '../config/store';
 import { log, readRecentLogs, sanitizeLogsForDoctor } from '../core/logger';
 import { renderCard } from '../card/run-renderer';
+import { appendSessionIdentityCard } from '../card/session-identity';
 import {
   finalizeIfRunning,
   initialState,
@@ -59,6 +60,11 @@ import { isAdminCommandName, type HandledChatCommand } from './registry';
 import { createRuntimeServicesPortContext } from '../runtime-services/selector';
 import { resolveEffectiveGatewayMode } from '../gateway/mode-policy';
 import { paths } from '../config/paths';
+import {
+  appendSessionIdentityMarkdown,
+  appendSessionIdentityPlainText,
+  type InteractionSessionIdentity,
+} from '../presentation/session-identity';
 
 export interface Controls {
   /** Restart the bridge in-process: disconnect WS, kill Codex runs, reload
@@ -188,21 +194,53 @@ export async function runCommandHandler(
  * losing the message is better than dying.
  */
 async function reply(ctx: CommandContext, markdown: string): Promise<void> {
+  const body = appendSessionIdentityMarkdown(markdown, sessionIdentity(ctx));
   try {
     await sendReplyMarkdown(
       ctx.channel,
       ctx.msg.chatId,
-      markdown,
+      body,
       withReplyMentions({
         sendOpts: { replyTo: ctx.msg.messageId },
         batch: [ctx.msg],
-        body: markdown,
+        body,
         replyMentionTargets: getReplyMentionTargets(ctx.controls.cfg),
       }),
     );
   } catch (err) {
     log.fail('command', err, { step: 'reply' });
   }
+}
+
+function sessionIdentity(ctx: CommandContext): InteractionSessionIdentity {
+  return {
+    bridge: ctx.scope,
+    domain: ctx.sessions.getRaw(ctx.scope)?.sessionId,
+  };
+}
+
+function cardWithSessionIdentity(ctx: CommandContext, card: object): object {
+  return appendSessionIdentityCard(card, sessionIdentity(ctx));
+}
+
+async function sendCardReply(ctx: CommandContext, card: object): Promise<void> {
+  await ctx.channel.send(
+    ctx.msg.chatId,
+    { card: cardWithSessionIdentity(ctx, card) },
+    { replyTo: ctx.msg.messageId },
+  );
+}
+
+async function sendManagedContextCard(ctx: CommandContext, card: object): Promise<void> {
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, cardWithSessionIdentity(ctx, card));
+}
+
+async function updateManagedContextCard(
+  ctx: CommandContext,
+  messageId: string,
+  card: object,
+): Promise<void> {
+  await updateManagedCard(ctx.channel, messageId, cardWithSessionIdentity(ctx, card));
 }
 
 function expandTilde(p: string): string {
@@ -253,7 +291,9 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
     ? `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`
     : '🎉 群已建好。\n\n@我 + 任意消息开始对话。';
   try {
-    await ctx.channel.send(created.chatId, { markdown: welcome });
+    await ctx.channel.send(created.chatId, {
+      markdown: appendSessionIdentityMarkdown(welcome, { bridge: created.chatId }),
+    });
   } catch (err) {
     console.warn('[new-chat] welcome message failed:', err);
   }
@@ -315,7 +355,7 @@ async function handleWsList(ctx: CommandContext): Promise<void> {
   const named = ctx.workspaces.listNamed();
   const currentCwd = ctx.workspaces.cwdFor(ctx.scope);
   const card = workspacesCard(currentCwd, named);
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function handleWsSave(name: string, ctx: CommandContext): Promise<void> {
@@ -384,7 +424,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     current: s.sessionId === currentSession?.sessionId,
   }));
   const card = resumeCard(cwd, entries);
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
@@ -432,7 +472,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
       })),
     },
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function handleStop(_args: string, ctx: CommandContext): Promise<void> {
@@ -710,9 +750,13 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
 
   const rawLogs = await readRecentLogs({ maxBytes: 60_000 });
   if (!rawLogs.trim()) {
+    const body = appendSessionIdentityPlainText(
+      '没有找到日志文件 — bridge 可能刚启动或日志目录不可写。',
+      sessionIdentity(ctx),
+    );
     await ctx.channel.send(
       ctx.msg.chatId,
-      { text: '没有找到日志文件 — bridge 可能刚启动或日志目录不可写。' },
+      { text: body },
       { replyTo: ctx.msg.messageId },
     );
     return;
@@ -755,19 +799,30 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   try {
     if (isP2p) {
       // Streaming card path — operator is the only viewer in p2p.
+      let doctorSessionId: string | undefined;
       await ctx.channel.stream(
         ctx.msg.chatId,
         {
           card: {
-            initial: renderCard(initialState),
+            initial: appendSessionIdentityCard(renderCard(initialState), {
+              bridge: ctx.scope,
+              domain: doctorSessionId,
+            }),
             producer: async (ctrl) => {
               let state: RunState = initialState;
-              const flush = (): Promise<void> => ctrl.update(renderCard(state));
+              const flush = (): Promise<void> => ctrl.update(appendSessionIdentityCard(
+                renderCard(state),
+                { bridge: ctx.scope, domain: doctorSessionId },
+              ));
               for await (const evt of handle.run.events) {
                 if (handle.interrupted) break;
                 // /doctor runs are session-less: skip 'system' so we don't
                 // persist a doctor's sessionId over the user's real session.
-                if (evt.type === 'system') continue;
+                if (evt.type === 'system') {
+                  doctorSessionId = evt.sessionId;
+                  await flush();
+                  continue;
+                }
                 if (evt.type === 'usage') {
                   if (evt.costUsd !== undefined) {
                     log.info('agent', 'usage', { step: 'doctor', costUsd: Number(evt.costUsd.toFixed(4)) });
@@ -793,9 +848,13 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
       // operator. No live streaming — the group should see nothing past the
       // ack reply above.
       let state: RunState = initialState;
+      let doctorSessionId: string | undefined;
       for await (const evt of handle.run.events) {
         if (handle.interrupted) break;
-        if (evt.type === 'system') continue;
+        if (evt.type === 'system') {
+          doctorSessionId = evt.sessionId;
+          continue;
+        }
         if (evt.type === 'usage') {
           if (evt.costUsd !== undefined) {
             log.info('agent', 'usage', { step: 'doctor', costUsd: Number(evt.costUsd.toFixed(4)) });
@@ -815,7 +874,10 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
         data: {
           receive_id: ctx.msg.senderId,
           msg_type: 'interactive',
-          content: JSON.stringify(renderCard(state)),
+          content: JSON.stringify(appendSessionIdentityCard(renderCard(state), {
+            bridge: ctx.scope,
+            domain: doctorSessionId,
+          })),
         },
       });
     }
@@ -828,7 +890,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
 
 async function handleHelp(_args: string, ctx: CommandContext): Promise<void> {
   const card = helpCard();
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 // ─── /account ─────────────────────────────────────────────────────────────
@@ -858,7 +920,7 @@ async function showCurrent(ctx: CommandContext): Promise<void> {
     botName: ctx.channel.botIdentity?.name,
     tenant: ctx.controls.cfg.accounts.app.tenant,
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function showForm(ctx: CommandContext): Promise<void> {
@@ -866,7 +928,7 @@ async function showForm(ctx: CommandContext): Promise<void> {
   if (ctx.fromCardAction) {
     await recallMessage(ctx, ctx.msg.messageId);
   }
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+  await sendManagedContextCard(ctx, card);
 }
 
 async function cancelAccount(ctx: CommandContext): Promise<void> {
@@ -888,7 +950,6 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
   const tenant = (fv.tenant === 'lark' ? 'lark' : 'feishu') as TenantBrand;
 
   const formMsgId = ctx.msg.messageId;
-  const channel = ctx.channel;
   const configPath = ctx.controls.configPath;
   const restart = ctx.controls.restart;
 
@@ -898,7 +959,6 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
   // client snaps the card back to its cached form state (overwriting any
   // update we made). Returning immediately lets the lock release; the
   // delayed updateManagedCard then sticks.
-  const chatId = ctx.msg.chatId;
   void (async () => {
     const submittedAt = Date.now();
     const waitForSettle = async (): Promise<void> => {
@@ -912,7 +972,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
     // (success card has no form), so this is fine.
     const finishSuccess = async (card: object): Promise<void> => {
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, card).catch((err) =>
+      await updateManagedContextCard(ctx, formMsgId, card).catch((err) =>
         console.warn('[account] form update failed:', err),
       );
       forgetManagedCard(formMsgId);
@@ -926,7 +986,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
     // the same card_id no longer fires cardActions.
     const finishFailure = async (errorMessage: string): Promise<void> => {
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, accountFailureCard(errorMessage))
+      await updateManagedContextCard(ctx, formMsgId, accountFailureCard(errorMessage))
         .catch((err) => console.warn('[account] mark old form failed:', err));
       forgetManagedCard(formMsgId);
       // Don't prefill the secret on retry — pre-filled secrets can get
@@ -936,7 +996,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
         initialTenant: tenant,
         prefillAppId: appId,
       });
-      await sendManagedCard(channel, chatId, retry).catch((err) =>
+      await sendManagedContextCard(ctx, retry).catch((err) =>
         console.warn('[account] post retry form failed:', err),
       );
     };
@@ -1028,7 +1088,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     admins: (access.admins ?? []).join(', '),
   });
   if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+  await sendManagedContextCard(ctx, card);
 }
 
 async function cancelConfig(ctx: CommandContext): Promise<void> {
@@ -1036,7 +1096,7 @@ async function cancelConfig(ctx: CommandContext): Promise<void> {
     const formMsgId = ctx.msg.messageId;
     void (async () => {
       await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
-      await updateManagedCard(ctx.channel, formMsgId, configCancelledCard()).catch((err) =>
+      await updateManagedContextCard(ctx, formMsgId, configCancelledCard()).catch((err) =>
         log.warn('command', 'config-cancel-update-failed', { err: String(err) }),
       );
       forgetManagedCard(formMsgId);
@@ -1150,7 +1210,6 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   }
 
   const formMsgId = ctx.msg.messageId;
-  const channel = ctx.channel;
   const configPath = ctx.controls.configPath;
 
   // Detach: same reason as account submit — Lark's client locks the form
@@ -1187,7 +1246,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     } catch (err) {
       log.fail('command', err, { step: 'config.save' });
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, configCancelledCard()).catch(() => {});
+      await updateManagedContextCard(ctx, formMsgId, configCancelledCard()).catch(() => {});
       forgetManagedCard(formMsgId);
       return;
     }
@@ -1206,8 +1265,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       adminsCount: admins.length,
     });
     await waitForSettle();
-    await updateManagedCard(
-      channel,
+    await updateManagedContextCard(
+      ctx,
       formMsgId,
       configSavedCard({
         messageReply,

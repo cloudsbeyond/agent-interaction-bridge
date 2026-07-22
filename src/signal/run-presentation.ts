@@ -1,6 +1,7 @@
 import type { Block, FooterStatus, RunState, ToolEntry } from '../card/run-state';
 import { normalizeChatPresentation } from '../card/chat-presentation-contract';
 import { toolBodyMd, toolHeaderText } from '../card/tool-render';
+import { stripTrailingSessionIdentity } from '../presentation/session-identity';
 
 const REASONING_MAX = 1500;
 const COLLAPSE_TOOL_THRESHOLD = 3;
@@ -52,7 +53,7 @@ export function presentRunState(state: RunState): RunStreamPresentation {
 
   for (const group of groupBlocks(state.blocks)) {
     if (group.kind === 'text') {
-      const body = normalizeChatPresentation(group.content);
+      const body = normalizeChatPresentation(stripTrailingSessionIdentity(group.content));
       if (body) sections.push({ kind: 'markdown', body });
     } else {
       sections.push(...presentToolGroup(group.tools, state.terminal !== 'running'));

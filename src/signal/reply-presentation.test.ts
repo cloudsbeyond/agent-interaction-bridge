@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'vitest';
+import { renderPresentationCard } from '../card/presentation-card';
+import { appendSessionIdentityCard } from '../card/session-identity';
 import { presentAnswerCard } from './reply-presentation';
 import type { RunState } from '../card/run-state';
 
@@ -139,6 +141,53 @@ describe('presentAnswerCard', () => {
     expect(presentation.sections.find((section) => section.title === '状态')?.body).toContain('阶段：活跃开发中');
     expect(presentation.sections.find((section) => section.title === '完成')?.body).toContain('消息入口');
     expect(JSON.stringify(presentation.sections)).not.toContain('****状态**');
+  });
+
+  test('does not lower a Domain-emitted session footer into card body bullets', () => {
+    const presentation = presentAnswerCard(
+      doneState([
+        [
+          '## 卡片验证',
+          '',
+          '### 载体',
+          '',
+          '- 当前回复：interactive',
+          '',
+          '### 检查点',
+          '',
+          '- footer 位于卡片底部',
+          '- 单独一行，不进入摘要列表',
+          '',
+          '> Session：Bridge - old-bridge | Domain - old-domain',
+        ].join('\n'),
+      ]),
+      { mode: 'dynamic_ui', userText: '验证飞书卡片样式' },
+    );
+
+    expect(presentation.sections).toEqual([
+      {
+        title: '载体',
+        body: '- 当前回复：interactive',
+      },
+      {
+        title: '检查点',
+        body: '- footer 位于卡片底部\n- 单独一行，不进入摘要列表',
+      },
+    ]);
+    expect(JSON.stringify(presentation)).not.toContain('Session：Bridge -');
+
+    const card = appendSessionIdentityCard(
+      renderPresentationCard(presentation),
+      { bridge: 'bridge', domain: 'domain' },
+    ) as { body: { elements: Array<Record<string, unknown>> } };
+    const rendered = JSON.stringify(card);
+    expect(rendered.match(/Session：Bridge -/g)).toHaveLength(1);
+    expect(rendered).not.toContain('- > Session：Bridge -');
+    expect(card.body.elements.at(-1)).toEqual({
+      tag: 'markdown',
+      content: '> Session：Bridge - bridge | Domain - domain',
+      text_size: 'notation',
+    });
   });
 });
 

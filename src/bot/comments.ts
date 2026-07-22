@@ -9,6 +9,10 @@ import { log } from '../core/logger';
 import { agentSessionContextVersion } from '../session/context-version';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
+import {
+  appendSessionIdentityPlainText,
+  renderSessionIdentityPlainText,
+} from '../presentation/session-identity';
 import { addCommentReaction, removeCommentReaction } from './reaction';
 
 export interface CommentDeps {
@@ -164,6 +168,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
 
   try {
     const run = agent.run(runOptions);
+    let domainSessionId = resumeFrom;
     let answer = '';
     let errorMsg: string | undefined;
     let terminal = false;
@@ -177,6 +182,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
           break;
         case 'system':
           if (e.sessionId) {
+            domainSessionId = e.sessionId;
             const effectiveCwd = e.cwd ?? cwd;
             sessions.set(
               synthChatId,
@@ -211,7 +217,11 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     let reply = stripMarkdown(answer.trim());
     if (errorMsg) reply = `⚠️ Agent runtime 报错：${errorMsg}`;
     if (!reply) reply = '（无回复内容）';
-    if (reply.length > REPLY_MAX_CHARS) reply = `${reply.slice(0, REPLY_MAX_CHARS - 1)}…`;
+    const identity = { bridge: synthChatId, domain: domainSessionId };
+    const footerLength = renderSessionIdentityPlainText(identity).length + 2;
+    const bodyMaxChars = Math.max(1, REPLY_MAX_CHARS - footerLength);
+    if (reply.length > bodyMaxChars) reply = `${reply.slice(0, bodyMaxChars - 1)}…`;
+    reply = appendSessionIdentityPlainText(reply, identity);
 
     await postCommentReply(channel, target, evt, reply).catch((err) => {
       log.fail('comment', err, { step: 'postCommentReply' });

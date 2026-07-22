@@ -1,6 +1,7 @@
 import type { RunState } from '../card/run-state';
 import { normalizeChatPresentation } from '../card/chat-presentation-contract';
 import { PRESENTATION_SECTION_LABELS } from '../presentation/section-profiles';
+import { stripTrailingSessionIdentity } from '../presentation/session-identity';
 
 const MAX_SECTION_BODY_CHARS = 420;
 const MAX_SECTIONS = 5;
@@ -44,12 +45,12 @@ export function presentAnswerCard(
 }
 
 function finalText(state: RunState): string {
-  return normalizeChatPresentation(
+  return normalizeChatPresentation(stripTrailingSessionIdentity(
     state.blocks
       .filter((block) => block.kind === 'text')
       .map((block) => block.content)
       .join('\n\n'),
-  );
+  ));
 }
 
 function parsePresentationText(content: string): AnswerCardPresentation {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { appendSessionIdentityCard } from './session-identity';
 import { renderCard } from './run-renderer';
 import type { RunState } from './run-state';
 
@@ -64,5 +65,42 @@ describe('renderCard', () => {
 
     expect(serialized).not.toContain('agent_interaction');
     expect(serialized).not.toContain('bot-profile');
+  });
+
+  test('keeps the Bridge-owned session footer as one standalone card element', () => {
+    const state: RunState = {
+      terminal: 'done',
+      footer: null,
+      reasoning: { content: '', active: false },
+      blocks: [
+        {
+          kind: 'text',
+          streaming: false,
+          content: [
+            '**检查点**',
+            '- footer 位于卡片底部',
+            '',
+            '> Session：Bridge - old-bridge | Domain - old-domain',
+          ].join('\n'),
+        },
+      ],
+    };
+
+    const card = appendSessionIdentityCard(
+      renderCard(state),
+      {
+        bridge: 'test-bridge-096950d3c05e',
+        domain: 'test-domain-dc54e20e89da',
+      },
+    ) as { body: { elements: Array<{ tag?: string; content?: string }> } };
+    const serialized = JSON.stringify(card);
+
+    expect(serialized.match(/Session：Bridge -/gu)).toHaveLength(1);
+    expect(serialized).not.toContain('old-bridge');
+    expect(card.body.elements.at(-1)).toEqual({
+      tag: 'markdown',
+      content: '> Session：Bridge - 096950d3c05e | Domain - dc54e20e89da',
+      text_size: 'notation',
+    });
   });
 });
