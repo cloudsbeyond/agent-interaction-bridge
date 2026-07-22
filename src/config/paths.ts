@@ -23,6 +23,7 @@ export const paths = {
   cacheDir: appDir,
   configFile: join(appDir, 'config.json'),
   sessionsFile: join(appDir, 'sessions.json'),
+  proactiveCorrelationsFile: join(appDir, 'proactive-correlations.json'),
   workspacesFile: join(appDir, 'workspaces.json'),
   processesFile: join(appDir, 'processes.json'),
   healthDir: join(appDir, 'health'),

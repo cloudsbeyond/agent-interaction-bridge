@@ -15,6 +15,7 @@ describe('runtime data contract', () => {
       'model-providers.json',
       'secrets.enc',
       'sessions.json',
+      'proactive-correlations.json',
       'workspaces.json',
       'processes.json',
       'health/',
@@ -34,5 +35,6 @@ describe('runtime data contract', () => {
     expect(validateRuntimeDataGitIgnore(gitignore)).toEqual([]);
     expect(runtimeDataGitIgnorePatterns()).toContain('model-providers.json');
     expect(runtimeDataGitIgnorePatterns()).toContain('secrets.enc');
+    expect(runtimeDataGitIgnorePatterns()).toContain('proactive-correlations.json');
   });
 });

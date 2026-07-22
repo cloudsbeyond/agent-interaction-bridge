@@ -24,6 +24,7 @@ config.json
 model-providers.json
 secrets.enc
 sessions.json
+proactive-correlations.json
 workspaces.json
 processes.json
 health/

@@ -36,6 +36,11 @@ export const RUNTIME_DATA_ENTRIES: RuntimeDataEntry[] = [
     committable: false,
   },
   {
+    path: 'proactive-correlations.json',
+    purpose: 'bounded proactive message to domain-agent session correlation',
+    committable: false,
+  },
+  {
     path: 'workspaces.json',
     purpose: 'local workspace mapping',
     committable: false,

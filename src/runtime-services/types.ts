@@ -1,4 +1,4 @@
-export type RuntimeConsumer = 'domain-agent' | 'build-agent';
+export type RuntimeConsumer = 'bridge-agent' | 'domain-agent' | 'build-agent';
 export type RuntimeServicesTransport = 'rpc' | 'mcp';
 
 export type RuntimeCapabilityId = string;
@@ -120,6 +120,21 @@ export interface VectorSearchResult {
   content: string;
   score: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeRecord {
+  namespace: string;
+  tableName: string;
+  id: string;
+  data: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  version?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordUpsertOutput {
+  record?: RuntimeRecord;
 }
 
 export interface LanguageCompleteOutput {

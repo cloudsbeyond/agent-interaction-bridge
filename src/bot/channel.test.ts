@@ -5,6 +5,7 @@ import type { CardActionEvent, NormalizedMessage } from '@larksuiteoapi/node-sdk
 import type { AgentAdapter, AgentRunOptions } from '../agent/types';
 import type { AppConfig } from '../config/schema';
 import { SessionStore } from '../session/store';
+import { ProactiveCorrelationStore } from '../signal/correlation-store';
 import { WorkspaceStore } from '../workspace/store';
 import { startChannel } from './channel';
 
@@ -44,6 +45,7 @@ const larkMock = vi.hoisted(() => {
         v1: {
           message: {
             reply: vi.fn(async () => ({ data: { message_id: 'om_managed_approval' } })),
+            get: vi.fn(async () => ({ data: { items: [] } })),
           },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
@@ -136,6 +138,7 @@ describe('channel gateway modes', () => {
     expect(prompts[0]).toContain('直接转给 agent');
     expect(prompts[0]).toContain('<plain_text_response_template>');
     expect(prompts[0]).not.toContain('<agent_interaction_protocol>');
+    expect(prompts[0]).not.toContain('<agent_signal_protocol>');
     expect(prompts[0]).not.toContain('<presentation_contract>');
     expect(prompts[0]).not.toContain('<bridge_context>');
     expect(prompts[0]).not.toContain('<interaction_intent>');
@@ -332,6 +335,8 @@ describe('channel gateway modes', () => {
     await larkMock.state.handlers?.message?.(message('/status'));
     const statusPayload = larkMock.state.send.mock.calls.at(-1)?.[1];
     expect(JSON.stringify(statusPayload)).not.toContain(task);
+    expect(JSON.stringify(statusPayload)).toContain('> Session：Bridge - oc_123');
+    expect(JSON.stringify(statusPayload)).toContain('Domain - -');
 
     await larkMock.state.handlers?.cardAction?.({
       chatId: 'oc_123',
@@ -515,6 +520,8 @@ describe('channel gateway modes', () => {
         expect.objectContaining({ replyTo: expect.any(String) }),
       );
     });
+    const finalTextPayload = larkMock.state.send.mock.calls.at(-1)?.[1] as { markdown?: string };
+    expect(finalTextPayload.markdown).toContain('> Session：Bridge - oc_123 | Domain - -');
     expect(larkMock.state.stream).not.toHaveBeenCalled();
 
     await bridge.disconnect();
@@ -824,6 +831,102 @@ describe('channel gateway modes', () => {
 
     await bridge.disconnect();
   });
+
+  test('audits a Domain Agent proactive signal and resumes its session from the human reply', async () => {
+    const runs: AgentRunOptions[] = [];
+    const prompts: string[] = [];
+    const actionRecords: Array<Record<string, unknown>> = [];
+    const runtimeCall = vi.fn(async (capabilityId: string, input: {
+      id?: string;
+      data?: Record<string, unknown>;
+    }) => {
+      if (capabilityId === 'record.upsert') {
+        if (input.data) actionRecords.push(input.data);
+        return {
+          status: 'ok',
+          capabilityId,
+          providerId: 'test-record-store',
+          modelId: 'not-applicable',
+          evidence: [],
+          record: { id: input.id },
+        };
+      }
+      return {
+        status: 'failed',
+        capabilityId,
+        providerId: 'mock-runtime-services',
+        modelId: 'not-applicable',
+        evidence: [{ kind: 'mock_failure', message: 'not needed by this test' }],
+      };
+    });
+    runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
+      {
+        id: 'model.language_completion',
+        kind: 'model',
+        capability: 'intent',
+        purpose: 'test',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+      {
+        id: 'storage.record_store',
+        kind: 'storage',
+        capability: 'record store',
+        purpose: 'ActionLog',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+    ], runtimeCall));
+    larkMock.state.send.mockResolvedValue({ messageId: 'om_proactive_1' });
+    const cfg = config({ gatewayMode: 'adapter', messageReply: 'card' });
+    const correlationPath = join(tmpdir(), `aib-correlations-${Date.now()}.json`);
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithProactiveSignal(prompts, runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-proactive.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-proactive.json`)),
+      controls: controls(cfg),
+      proactiveCorrelations: new ProactiveCorrelationStore({ path: correlationPath }),
+    });
+
+    await larkMock.state.handlers?.message?.({
+      ...message('开始任务'),
+      messageId: 'om_origin_1',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await vi.waitFor(() => expect(actionRecords.some(
+      (record) => record.eventType === 'delivery_succeeded',
+    )).toBe(true));
+    expect(prompts[0]).toContain('<agent_signal_protocol>');
+    expect(larkMock.state.send).toHaveBeenCalledWith(
+      'oc_123',
+      expect.any(Object),
+      expect.objectContaining({ replyTo: 'om_origin_1' }),
+    );
+    const proactivePayload = larkMock.state.send.mock.calls.find((call) =>
+      JSON.stringify(call[1]).includes('需要确认'),
+    )?.[1];
+    expect(JSON.stringify(proactivePayload)).toContain('> Session：Bridge - oc_123');
+    expect(JSON.stringify(proactivePayload)).toContain('Domain - session_1');
+
+    await larkMock.state.handlers?.message?.({
+      ...message('继续执行'),
+      messageId: 'om_reply_1',
+      replyToMessageId: 'om_proactive_1',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+
+    expect(runs[1]?.sessionId).toBe('session_1');
+    expect(actionRecords.map((record) => record.eventType)).toEqual(expect.arrayContaining([
+      'outbound_intent_accepted',
+      'delivery_succeeded',
+      'reply_correlated',
+    ]));
+
+    await bridge.disconnect();
+  });
 });
 
 function config(preferences: NonNullable<AppConfig['preferences']> & { gatewayMode?: string }): AppConfig {
@@ -886,6 +989,46 @@ function agentWithText(
         pid: 123,
         events: (async function* () {
           yield { type: 'text' as const, delta: text };
+          yield { type: 'done' as const, sessionId: 'session_1' };
+        })(),
+        stop: async () => {},
+        waitForExit: async () => true,
+      };
+    },
+  };
+}
+
+function agentWithProactiveSignal(
+  prompts: string[],
+  runs: AgentRunOptions[],
+): AgentAdapter {
+  let count = 0;
+  return {
+    id: 'agent_runtime.codex_app_server',
+    displayName: 'Codex App Server Test',
+    isAvailable: async () => true,
+    run(opts: AgentRunOptions) {
+      prompts.push(opts.prompt);
+      runs.push(opts);
+      const current = count++;
+      return {
+        pid: 123,
+        events: (async function* () {
+          yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+          if (current === 0) {
+            yield {
+              type: 'signal' as const,
+              signal: {
+                id: 'domain-status-1',
+                kind: 'status' as const,
+                title: '需要确认',
+                summary: '请回复后继续。',
+                state: 'waiting_for_human',
+              },
+            };
+          } else {
+            yield { type: 'text' as const, delta: '已恢复原会话。' };
+          }
           yield { type: 'done' as const, sessionId: 'session_1' };
         })(),
         stop: async () => {},
