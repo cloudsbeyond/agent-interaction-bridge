@@ -11,7 +11,8 @@ import { prepareAgentProfileRunPlan } from '../agent/profile-policy';
 import { handleCardAction } from '../card/dispatcher';
 import { renderPresentationCard } from '../card/presentation-card';
 import { renderCard } from '../card/run-renderer';
-import { taskApprovalCard } from '../card/task-approval-card';
+import { isManaged, sendManagedCard, updateManagedCard } from '../card/managed';
+import { taskApprovalCard, taskApprovalDecisionCard } from '../card/task-approval-card';
 import {
   finalizeIfRunning,
   initialState,
@@ -67,7 +68,12 @@ import {
 import type { StatelessIntentJudge } from '../interaction/intent';
 import { createBridgeStatelessIntentJudge } from '../interaction/model-judge';
 import { assessToolRisk } from '../interaction/risk-policy';
-import { parseApprovalDecision, TaskApprovalStore } from '../task/approval-store';
+import type { ApprovalDecisionAction } from '../task/approval-contract';
+import {
+  parseApprovalDecision,
+  TaskApprovalStore,
+  type PendingApproval,
+} from '../task/approval-store';
 import { decideRunPolicy } from '../task/run-policy';
 import { TaskStatusStore, type TaskLifecycle } from '../task/status-store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -591,6 +597,24 @@ interface RunBatchDeps {
   gatewayModeDegradeNotices: Set<string>;
 }
 
+async function settleApprovalCard(
+  channel: LarkChannel,
+  messageId: string,
+  approval: PendingApproval,
+  action: ApprovalDecisionAction,
+): Promise<void> {
+  if (!isManaged(messageId)) return;
+  try {
+    await updateManagedCard(channel, messageId, taskApprovalDecisionCard(approval, action));
+  } catch (err) {
+    log.warn('approval', 'card-update-failed', {
+      approvalId: approval.id,
+      action,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const {
     channel,
@@ -745,6 +769,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await flushTurnTrace();
       return;
     }
+    await settleApprovalCard(channel, lastMsg.messageId, approval, decision.action);
     if (decision.action === 'modify') {
       approvals.cancel(decision.approvalId);
       taskStatus.finish(scope, 'cancelled');
@@ -953,7 +978,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       log.info('approval', 'skipped', { scope, reason: 'auto-run', policy: policy.source });
     } else {
       taskStatus.markPending(scope, { task: taskText, cwd });
-      await channel.send(chatId, { card: taskApprovalCard(approval) }, sendOpts);
+      await sendManagedCard(channel, chatId, taskApprovalCard(approval), lastMsg.messageId);
       log.info('approval', 'created', { scope, approvalId: approval.id });
       turnTrace.record('approval_required', {
         approvalId: approval.id,

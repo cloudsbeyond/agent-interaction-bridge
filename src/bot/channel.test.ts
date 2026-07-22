@@ -32,8 +32,19 @@ const larkMock = vi.hoisted(() => {
     send: state.send,
     stream: state.stream,
     rawClient: {
+      cardkit: {
+        v1: {
+          card: {
+            create: vi.fn(async () => ({ data: { card_id: 'card_managed_approval' } })),
+            update: vi.fn(async () => ({})),
+          },
+        },
+      },
       im: {
         v1: {
+          message: {
+            reply: vi.fn(async () => ({ data: { message_id: 'om_managed_approval' } })),
+          },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
             delete: vi.fn(async () => ({})),
@@ -70,6 +81,16 @@ describe('channel gateway modes', () => {
     larkMock.channel.connect.mockResolvedValue(undefined);
     larkMock.channel.disconnect.mockReset();
     larkMock.channel.disconnect.mockResolvedValue(undefined);
+    larkMock.channel.rawClient.cardkit.v1.card.create.mockReset();
+    larkMock.channel.rawClient.cardkit.v1.card.create.mockResolvedValue({
+      data: { card_id: 'card_managed_approval' },
+    });
+    larkMock.channel.rawClient.cardkit.v1.card.update.mockReset();
+    larkMock.channel.rawClient.cardkit.v1.card.update.mockResolvedValue({});
+    larkMock.channel.rawClient.im.v1.message.reply.mockReset();
+    larkMock.channel.rawClient.im.v1.message.reply.mockResolvedValue({
+      data: { message_id: 'om_managed_approval' },
+    });
     runtimeServicesMock.createRuntimeServicesPortContext.mockReset();
     runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
       {
@@ -183,18 +204,9 @@ describe('channel gateway modes', () => {
     await larkMock.state.handlers?.message?.(message('/approve run git status and summarize it'));
     await vi.advanceTimersByTimeAsync(700);
 
-    await vi.waitFor(() => {
-      expect(larkMock.state.send).toHaveBeenCalledWith(
-        'oc_123',
-        { card: expect.any(Object) },
-        expect.objectContaining({ replyTo: expect.any(String) }),
-      );
-    });
+    await vi.waitFor(() => expect(latestApprovalCard()).toBeDefined());
     expect(runs).toHaveLength(0);
-    const approvalCard = larkMock.state.send.mock.calls.find(
-      (call) => Boolean((call[1] as { card?: object })?.card),
-    )?.[1] as { card: object };
-    const execute = collectButtonValues(approvalCard.card).find(
+    const execute = collectButtonValues(latestApprovalCard()).find(
       (value) => value.approval_action === 'execute',
     );
     expect(execute).toEqual(expect.objectContaining({
@@ -204,7 +216,7 @@ describe('channel gateway modes', () => {
 
     await larkMock.state.handlers?.cardAction?.({
       chatId: 'oc_123',
-      messageId: 'om_approval_card',
+      messageId: 'om_managed_approval',
       operator: { openId: 'ou_123', name: 'Ada' },
       action: { value: execute },
     } as unknown as CardActionEvent);
@@ -214,6 +226,84 @@ describe('channel gateway modes', () => {
     expect(prompts[0]).toContain('run git status and summarize it');
     expect(prompts[0]).not.toContain('[card-click]');
     expect(prompts[0]).not.toContain('approval_action');
+    expect(larkMock.channel.rawClient.cardkit.v1.card.update).toHaveBeenCalledTimes(1);
+    const settledCard = latestUpdatedManagedCard();
+    expect(collectButtonValues(settledCard)).toEqual([]);
+    expect(JSON.stringify(settledCard)).toContain('已批准');
+    expect(JSON.stringify(settledCard)).toContain('正在执行');
+
+    await bridge.disconnect();
+  });
+
+  test('settles a cancelled task approval card without running the agent', async () => {
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('should not run', [], runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-approval-cancel.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-approval-cancel.json`)),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message('/approve do not run this task'));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(latestApprovalCard()).toBeDefined());
+    const cancel = collectButtonValues(latestApprovalCard()).find(
+      (value) => value.approval_action === 'cancel',
+    );
+    expect(cancel).toBeDefined();
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_managed_approval',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: cancel },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(runs).toHaveLength(0);
+    expect(larkMock.channel.rawClient.cardkit.v1.card.update).toHaveBeenCalledTimes(1);
+    const settledCard = latestUpdatedManagedCard();
+    expect(collectButtonValues(settledCard)).toEqual([]);
+    expect(JSON.stringify(settledCard)).toContain('已停止');
+    expect(JSON.stringify(settledCard)).toContain('未执行 Agent');
+
+    await bridge.disconnect();
+  });
+
+  test('continues an approved task when the terminal card update fails', async () => {
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('approved despite card update failure', [], runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-approval-update-fail.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-approval-update-fail.json`)),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message('/approve continue after card update failure'));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(latestApprovalCard()).toBeDefined());
+    const execute = collectButtonValues(latestApprovalCard()).find(
+      (value) => value.approval_action === 'execute',
+    );
+    expect(execute).toBeDefined();
+    larkMock.channel.rawClient.cardkit.v1.card.update.mockRejectedValueOnce(
+      new Error('update rejected'),
+    );
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_managed_approval',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    expect(larkMock.channel.rawClient.cardkit.v1.card.update).toHaveBeenCalledTimes(1);
 
     await bridge.disconnect();
   });
@@ -232,11 +322,8 @@ describe('channel gateway modes', () => {
 
     await larkMock.state.handlers?.message?.(message(`/approve ${task}`));
     await vi.advanceTimersByTimeAsync(700);
-    await vi.waitFor(() => expect(larkMock.state.send).toHaveBeenCalled());
-    const approvalCard = larkMock.state.send.mock.calls.find(
-      (call) => Boolean((call[1] as { card?: object })?.card),
-    )?.[1] as { card: object };
-    const execute = collectButtonValues(approvalCard.card).find(
+    await vi.waitFor(() => expect(latestApprovalCard()).toBeDefined());
+    const execute = collectButtonValues(latestApprovalCard()).find(
       (value) => value.approval_action === 'execute',
     );
     expect(execute).toBeDefined();
@@ -273,10 +360,7 @@ describe('channel gateway modes', () => {
 
     await larkMock.state.handlers?.message?.(message('/approve scoped task'));
     await vi.advanceTimersByTimeAsync(700);
-    const approvalCard = larkMock.state.send.mock.calls.find(
-      (call) => Boolean((call[1] as { card?: object })?.card),
-    )?.[1] as { card: object };
-    const execute = collectButtonValues(approvalCard.card).find(
+    const execute = collectButtonValues(latestApprovalCard()).find(
       (value) => value.approval_action === 'execute',
     );
 
@@ -851,4 +935,24 @@ function collectButtonValues(node: unknown): Record<string, unknown>[] {
     ? [value.value as Record<string, unknown>]
     : [];
   return own.concat(Object.values(value).flatMap(collectButtonValues));
+}
+
+function latestApprovalCard(): object | undefined {
+  const managedCall = (larkMock.channel.rawClient.cardkit.v1.card.create.mock.calls as unknown[][])
+    .at(-1)?.[0] as
+    | { data?: { data?: string } }
+    | undefined;
+  if (managedCall?.data?.data) return JSON.parse(managedCall.data.data) as object;
+  const inline = larkMock.state.send.mock.calls.find(
+    (call) => Boolean((call[1] as { card?: object })?.card),
+  )?.[1] as { card?: object } | undefined;
+  return inline?.card;
+}
+
+function latestUpdatedManagedCard(): object | undefined {
+  const call = (larkMock.channel.rawClient.cardkit.v1.card.update.mock.calls as unknown[][])
+    .at(-1)?.[0] as
+    | { data?: { card?: { data?: string } } }
+    | undefined;
+  return call?.data?.card?.data ? JSON.parse(call.data.card.data) as object : undefined;
 }
