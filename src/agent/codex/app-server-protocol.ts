@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentEvent } from '../types';
+import { extractAgentSignals, stripAgentSignalBlocks } from '../../signal/protocol';
 
 export type CodexProtocolId = string | number;
 
@@ -330,7 +331,13 @@ function* translateCompletedItem(params: Record<string, unknown>): Generator<Age
   const itemType = stringValue(item.type);
   if (itemType === 'agentMessage' || itemType === 'agent_message') {
     const text = stringValue(item.text, item.message, item.content);
-    if (text) yield { type: 'text_replace', text };
+    if (text) {
+      for (const signal of extractAgentSignals(text)) {
+        yield { type: 'signal', signal };
+      }
+      const visible = stripAgentSignalBlocks(text);
+      if (visible) yield { type: 'text_replace', text: visible };
+    }
     return;
   }
 

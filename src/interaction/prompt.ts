@@ -7,6 +7,16 @@ If approval is needed, emit one fenced JSON block only:
 For normal answers, retries, presentation feedback, status, or missing context, reply normally.
 </agent_interaction_protocol>`;
 
+const AGENT_SIGNAL_PROTOCOL = `<agent_signal_protocol>
+When you need to initiate a separate human-facing update through the Bridge, emit one provider-neutral AgentSignal block:
+<agent_signal>
+{"agent_signal":{"id":"stable-id","kind":"status","title":"Short title","summary":"Human-facing summary","severity":"info","state":"optional-state"}}
+</agent_signal>
+Use the existing AgentSignal kinds only. The id is required and must be stable for retries.
+Do not include chat, scope, carrier, session, endpoint profile, credentials, or delivery targets; Bridge derives and validates them from the active run.
+Normal answers should remain normal text. Do not wrap the final answer in an AgentSignal unless it is intentionally a separate proactive update.
+</agent_signal_protocol>`;
+
 export type PresentationPromptMode = 'adapter' | 'relay';
 
 const FEISHU_LARK_RUNTIME_PRESENTATION_HINT = `<presentation_hint>
@@ -39,6 +49,7 @@ export function withInteractionProtocol(
   const presentation = channelPresentationTemplate(options.channel, 'adapter');
   return [
     PROTOCOL,
+    AGENT_SIGNAL_PROTOCOL,
     presentation,
     prompt,
   ]

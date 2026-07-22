@@ -14,6 +14,7 @@ describe('withInteractionProtocol', () => {
     const prompt = withInteractionProtocol('修复登录失败');
 
     expect(prompt).toContain('<agent_interaction_protocol>');
+    expect(prompt).toContain('<agent_signal_protocol>');
     expect(prompt).toContain('"agent_interaction"');
     expect(prompt).not.toContain('human_feedback');
     expect(prompt).toContain('risk_approval');
@@ -44,6 +45,7 @@ describe('withInteractionProtocol', () => {
     expect(prompt).toContain('Use simple line breaks and "- " bullets');
     expect(prompt).toContain('看看本周转化率和活跃用户趋势');
     expect(prompt).not.toContain('<agent_interaction_protocol>');
+    expect(prompt).not.toContain('<agent_signal_protocol>');
     expect(prompt).not.toContain('<presentation_contract>');
     expect(prompt).not.toContain('<presentation_hint>');
     expect(prompt).not.toContain('interactive_card_or_dynamic_ui');
