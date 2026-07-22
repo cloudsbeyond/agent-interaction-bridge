@@ -1,7 +1,7 @@
 {
   "name": "agent-interaction-bridge",
   "version": "0.1.0",
-  "description": "Local-first bounded interaction bridge for human surfaces and execution agents",
+  "description": "Local-first bounded interaction bridge for human surfaces and domain agents",
   "type": "module",
   "bin": {
     "agent-interaction-bridge": "./bin/agent-interaction-bridge.mjs"
@@ -53,15 +53,6 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "protobufjs"
-    ],
-    "overrides": {
-      "rollup": "npm:@rollup/wasm-node@4.60.2"
-    }
   },
   "keywords": [
     "feishu",

@@ -1,0 +1,7 @@
+minimumReleaseAge: 0
+overrides:
+  rollup: npm:@rollup/wasm-node@4.60.2
+
+allowBuilds:
+  esbuild: true
+  protobufjs: true
