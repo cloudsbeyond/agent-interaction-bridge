@@ -2,7 +2,7 @@
 
 This directory is the product and system architecture source for
 Agent-Interaction-Bridge. It describes the runtime objects, channel boundaries,
-execution endpoint boundaries, Runtime Services boundary, and product-facing
+domain-agent endpoint boundaries, Runtime Services boundary, and product-facing
 contracts that are useful to open-source users and contributors.
 
 The product L0 assets are [../README.md](../README.md) and
@@ -12,11 +12,13 @@ L1/L2 assets and must not redefine product intent.
 ## Files
 
 - [agentic-ontology.md](./agentic-ontology.md): target product ontology for
-  treating the bridge as a bounded interaction agent with explicit runtime
-  objects, capability boundaries, typed proposals, and action logs.
+  treating the bridge as a bounded bridge agent between humans and domain agents
+  with explicit runtime objects, capability boundaries, typed proposals, and
+  action logs.
 - [system-design.md](./system-design.md): target system design for the current
-  Feishu/Lark to Codex path, gateway modes, runtime object flow, endpoint
-  profile boundaries, and Runtime Services integration.
+  bidirectional Feishu/Lark and Codex path, gateway modes, proactive delivery
+  correlation, compact reply identity observability, runtime object flow,
+  endpoint profile boundaries, and Runtime Services integration.
 - [contracts/*.yaml](./contracts/): executable product architecture contract
   records for public API, carrier intake, presentation rendering, HITL,
   endpoint policy, runtime data, operator commands, and resource architecture.

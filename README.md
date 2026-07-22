@@ -1,13 +1,14 @@
 # Agent-Interaction-Bridge
 
 `Agent-Interaction-Bridge` is a local-first bounded interaction product. It
-mediates between human surfaces and execution agents by keeping meaning,
+mediates between human surfaces and domain agents by keeping meaning,
 capability, state, presentation, delivery, and execution authority as separate
 runtime objects.
 
-The current product path connects Feishu/Lark to a local Codex execution
-endpoint. Future surfaces can use the same bridge boundary without inheriting
-Feishu/Lark transport details or Codex-specific session semantics.
+The current product path connects Feishu/Lark through the bridge to a local
+Codex domain agent running behind an execution endpoint. Future surfaces and
+domain agents can use the same bridge boundary without inheriting Feishu/Lark
+transport details or Codex-specific session semantics.
 
 This `README.md` is the human-facing product narrative. [`PRD.md`](./PRD.md)
 is the fixed equivalent formal L0 projection: it compresses the same product intent,
@@ -20,13 +21,24 @@ Runtime path:
 ```mermaid
 flowchart LR
   user["**Human Surface**<br/>Feishu / Lark"]
-  bridge["**Bridge Domain Agent**<br/>Agent-Interaction-Bridge"]
-  codex["**Execution Agent**<br/>Codex exec / app-server"]
+  bridge["**Bridge Agent**<br/>Agent-Interaction-Bridge"]
+  codex["**Domain Agent**<br/>Codex via exec / app-server"]
   user -->|"HumanTurn"| bridge
   bridge -->|"AgentTask"| codex
-  codex -. "AgentSignal" .-> bridge
+  codex -. "AgentSignal / outbound intent" .-> bridge
   bridge -. "PresentationPlan + DeliveryPlan" .-> user
 ```
+
+The formal interaction path is bidirectional. Human turns reach a domain agent
+through the bridge, and domain-agent-initiated messages return through the same
+bridge policy, presentation, carrier, and audit path. For proactive delivery,
+the bridge preserves `correlation_id -> message_id -> scope -> session_id` so a
+human reply resumes the originating domain-agent task instead of starting an
+unrelated session. Every normal Feishu/Lark reply ends with compact Bridge
+scope and Domain session/thread references for operator traceability; each
+displayed identifier is the final 12 characters with no ellipsis, rendered as
+one `Session：Bridge - <id> | Domain - <id>` line. Markdown and card
+carriers use a quote block; plain-text carriers keep the same undecorated line.
 
 Runtime Services are the support plane for profiles, resources, sessions,
 ActionLog, artifacts, vectors, and other runtime state stores.
@@ -35,7 +47,7 @@ Detailed object flows are split into layered diagrams in
 [architecture/system-design.md](./architecture/system-design.md). Keep this
 entry page to product positioning, operator setup, and the single runtime path.
 
-The bridge domain agent is a trust boundary. Local Codex can run with broad
+The bridge agent is the interaction trust boundary. Local Codex can run with broad
 filesystem and shell access; remote or A2A execution endpoints need explicit
 capability profiles, HITL policy, credential boundaries, state boundaries, and
 audit logs.
@@ -43,7 +55,7 @@ audit logs.
 ## Gateway Modes
 
 `preferences.gatewayMode` selects how much interpretation the bridge applies
-between the channel and the execution agent:
+between the channel and the domain agent:
 
 - `adapter` keeps the bounded interaction-agent behavior.
   Bridge may classify intent, inject HITL/presentation protocol guidance,
@@ -57,7 +69,7 @@ between the channel and the execution agent:
   model judgment.
 
 Missing or invalid values default to `adapter`. Use `relay` when
-the operator wants the execution agent to receive the user's task with minimal
+the operator wants the domain agent to receive the user's task with minimal
 bridge interpretation.
 
 `/gatewayMode relay|adapter|default` can override the mode for the current
@@ -75,7 +87,7 @@ running as relay or adapter.
 flowchart LR
   human["Human Surface<br/>Feishu / Lark"]
   channel["Bridge Channel Duties<br/>auth · allowedChats · mention · queue · session · attachments · rendering"]
-  agent["Execution Agent<br/>Codex exec / app-server"]
+  agent["Domain Agent<br/>Codex via exec / app-server"]
   human -->|"message + attachments + quotes"| channel
   channel -->|"minimal AgentTask"| agent
   agent -->|"stream / AgentSignal"| channel
@@ -95,7 +107,7 @@ flowchart LR
   channel["Bridge Channel Duties"]
   adapter["Bridge Adapter<br/>intent · HITL · presentation hints"]
   runtime["Runtime Services<br/>stateless helper resources"]
-  agent["Execution Agent<br/>Codex exec / app-server"]
+  agent["Domain Agent<br/>Codex via exec / app-server"]
   human -->|"message + attachments + quotes"| channel
   channel -->|"HumanTurn"| adapter
   adapter <-->|"resource status / typed proposals"| runtime
@@ -131,7 +143,8 @@ narrative and `PRD.md`; they should not redefine L0 product intent.
   `SurfaceContext`.
 - `AgentSignal`: semantic event, not Feishu JSON or Codex raw stream.
 - `Carrier`: channel protocol such as `feishu.card` or `cli.stdout`.
-- `AgentTask`: explicit delegation to an execution endpoint.
+- `AgentTask`: explicit delegation to a domain agent through an execution
+  endpoint.
 - `ActionLog`: durable evidence of bridge decisions, capability use, delivery,
   and feedback.
 - `CapabilityCatalog`: bridge cognitive capabilities such as language, vision,
@@ -142,11 +155,11 @@ narrative and `PRD.md`; they should not redefine L0 product intent.
   results instead of hidden assumptions.
 
 Provider-specific code belongs at entity and adapter boundaries. The bridge
-domain agent is the human-facing product layer; execution endpoints are
-reasoning/tool-use boundaries.
+agent is the human-facing interaction layer; domain agents own task reasoning
+and tool use through execution endpoints.
 
-Both execution endpoints and bridge-internal processing may use model calls, but
-with different authority. Execution endpoints interpret tasks, make judgments,
+Both domain-agent endpoints and bridge-internal processing may use model calls,
+but with different authority. Domain agents interpret tasks, make judgments,
 and drive work. Bridge helper models are consumed through
 `agent-runtime-services` for perception, intent assistance, expression planning,
 summarization, retrieval, artifact generation, and quality evaluation, but they
@@ -159,13 +172,14 @@ model/config/env.
 
 Every service and resource should declare one state class: `stateless`,
 `bounded-state`, `durable-state`, or `external-provider-state`. Helper model
-calls are stateless from the bridge contract perspective. Durable state such as
-ActionLog, bridge config, app secrets, sessions, and process state live under
-the bridge runtime home. Model-provider config, model secrets, artifacts, and
-vector indexes live under the Runtime Services home by default. Agents do not
-share raw resources or sessions. Runtime Services are the support plane for
-those base capabilities, and cross-boundary access must be represented as a
-typed proposal, artifact, `AgentTask`, `AgentSignal`, or `ActionLog` record.
+calls are stateless from the bridge contract perspective. Bridge config, app
+secrets, bounded correlation, session references, and process state live under
+the bridge runtime home. ActionLog, model-provider config, model secrets,
+artifacts, and vector indexes live under the Runtime Services home by default.
+Agents do not share raw resources or sessions. Runtime Services are the support
+plane for those base capabilities, and cross-boundary access must be
+represented as a typed proposal, artifact, `AgentTask`, `AgentSignal`, or
+`ActionLog` record.
 
 Current canonical Runtime Services resources:
 
@@ -180,7 +194,8 @@ Current canonical Runtime Services resources:
 - `storage.vector_index`: Runtime Services vector index for retrieval and
   similarity search over embedding outputs.
 - `storage.record_store`: Runtime Services JSON metadata records by explicit
-  namespace and table name.
+  namespace and table name. Domain-agent-initiated delivery fails closed before
+  carrier send when this ActionLog resource is unavailable.
 - `compute.remote_agent_sandbox`: bounded compute for A2A or remote agent
   endpoints without inheriting owner authority.
 
@@ -197,6 +212,11 @@ Current canonical Runtime Services resources:
 - Select either the stable Codex exec endpoint or the Codex app-server endpoint.
 - Run as a macOS LaunchAgent so the bridge can come back after login/reboot.
 - Stream progress, tool activity, HITL requests, cards, and final results.
+- Route Domain Agent proactive `AgentSignal` updates through Bridge policy,
+  ActionLog, Feishu/Lark delivery, and reply-to-originating-session correlation.
+- Append compact Bridge scope and Domain session/thread references to every
+  normal Feishu/Lark text or card reply without turning those references into
+  routing authority.
 - Download Feishu attachments locally and pass paths to the execution endpoint.
 - Select `relay` or `adapter` gateway mode globally, with a per-session
   `/gatewayMode` override.
@@ -215,6 +235,8 @@ Current canonical Runtime Services resources:
 
 - Prioritize user-visible Feishu/Lark delivery quality before adding more
   project self-management or resource-management surfaces.
+- Keep ACP, A2A, public ingress, and Codex plugin/skill transports outside P0;
+  a later adapter may reuse the provider-neutral AgentSignal boundary.
 - Reuse bounded app-server pools only inside one endpoint profile. Treat this
   as a runtime-service optimization, not cross-agent session sharing.
 - Add thread, fork, side, queue, steer, and compact workflows so group

@@ -1,7 +1,7 @@
 schema_version: 1
 contracts:
   - id: feishu.carrier
-    title: Feishu/Lark carrier intake
+    title: Feishu/Lark bidirectional carrier interaction
     tier: contracted
     risk_tags:
       - schema
@@ -10,11 +10,11 @@ contracts:
     l0:
       owner: human
       status: frozen
-      problem: Keep Feishu/Lark as the current human channel while preserving channel-neutral runtime semantics.
+      problem: Keep Feishu/Lark as the current human channel for both human-initiated and domain-agent-initiated interaction while preserving channel-neutral runtime semantics, audit evidence, and reply continuity.
     l1:
       owner: human
       status: frozen
-      expression: Feishu event -> HumanTurn + SurfaceContext -> bridge runtime -> DeliveryPlan -> Feishu payload
+      expression: Feishu event -> HumanTurn -> bridge -> AgentTask -> domain agent; domain AgentSignal or outbound intent -> bridge correlation + DeliveryPlan -> Feishu payload -> reply HumanTurn -> originating session
       paths:
         - architecture/system-design.md
         - architecture/agentic-ontology.md
@@ -22,7 +22,7 @@ contracts:
       owner: human
       status: frozen
       path: architecture/contracts/feishu-carrier.yaml
-      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      freeze_signal: Bidirectional bridge interaction expansion accepted by human owner on 2026-07-22.
       invariants:
         - Feishu payloads stay behind carrier adapters.
         - Raw receive_v1 message fields must be validated before they inform carrier decisions.
@@ -30,14 +30,18 @@ contracts:
         - Quotes, attachments, comments, reactions, and media cache are normalized into HumanTurn facts before runtime planning.
         - Feishu adapter derives SurfaceContext and carrier capabilities but must not decide InteractionIntent, ExpressionProfile, endpoint authority, cwd/session/profile, or approval semantics.
         - Feishu prompt planning may pass normalized context and typed helper-model proposals into the bridge runtime, but carrier code must not own those proposals.
-        - Feishu send/update ids, retries, and delivery status are bounded carrier state, not bridge semantic memory.
+        - Domain-agent-initiated messages must enter bridge policy, presentation, carrier delivery, and ActionLog; normal interaction must not bypass the bridge through a direct carrier client.
+        - Bridge must persist a typed correlation from outbound intent through Feishu message id and conversation scope to the originating domain-agent session id before treating proactive delivery as resumable.
+        - A reply to a bridge-delivered proactive message must resolve correlation and endpoint profile policy before session lookup, approval persistence, or domain-agent continuation.
+        - Feishu send/update ids, retries, and delivery status remain bounded carrier state; only their typed correlation and audit records enter bridge state or ActionLog.
+        - "Every normal Feishu/Lark text or card reply must append one `Session：Bridge - <id> | Domain - <id>` line as presentation-only traceability; identifiers display at most their final 12 characters without ellipses, Markdown/card carriers use a `>` quote block, and plain-text carriers omit quote syntax."
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/bot/feishu-raw-event-contract.test.ts src/bot/intake-contract.test.ts src/bot/prompt-plan.test.ts src/bot/scope.test.ts
+          command: pnpm test -- src/bot/feishu-raw-event-contract.test.ts src/bot/intake-contract.test.ts src/bot/prompt-plan.test.ts src/bot/scope.test.ts src/bot/feishu-signal-delivery.test.ts src/bot/channel.test.ts src/bot/comments.test.ts src/commands/registry.test.ts src/card/session-identity.test.ts src/presentation/session-identity.test.ts src/signal/protocol.test.ts src/signal/ingress-policy.test.ts src/signal/action-log.test.ts src/signal/correlation-store.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/bot/feishu-raw-event-contract.test.ts src/bot/intake-contract.test.ts src/bot/prompt-plan.test.ts src/bot/scope.test.ts
+      generation_command: pnpm test -- src/bot/feishu-raw-event-contract.test.ts src/bot/intake-contract.test.ts src/bot/prompt-plan.test.ts src/bot/scope.test.ts src/bot/feishu-signal-delivery.test.ts src/bot/channel.test.ts src/bot/comments.test.ts src/commands/registry.test.ts src/card/session-identity.test.ts src/presentation/session-identity.test.ts src/signal/protocol.test.ts src/signal/ingress-policy.test.ts src/signal/action-log.test.ts src/signal/correlation-store.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -46,6 +50,15 @@ contracts:
       mode: durable
       carriers:
         - src/bot/channel.ts
+        - src/bot/agent-stream.ts
+        - src/bot/proactive-reply.ts
+        - src/card/session-identity.ts
+        - src/presentation/session-identity.ts
+        - src/bot/feishu-signal-delivery.ts
+        - src/signal/protocol.ts
+        - src/signal/ingress-policy.ts
+        - src/signal/action-log.ts
+        - src/signal/correlation-store.ts
         - src/bot/feishu-raw-event-contract.ts
         - src/bot/intake-contract.ts
         - src/bot/prompt-plan.ts
@@ -65,6 +78,15 @@ contracts:
       owner: agent
       artifacts:
         - src/bot/channel.ts
+        - src/bot/agent-stream.ts
+        - src/bot/proactive-reply.ts
+        - src/card/session-identity.ts
+        - src/presentation/session-identity.ts
+        - src/bot/feishu-signal-delivery.ts
+        - src/signal/protocol.ts
+        - src/signal/ingress-policy.ts
+        - src/signal/action-log.ts
+        - src/signal/correlation-store.ts
         - src/bot/feishu-raw-event-contract.ts
         - src/bot/intake-contract.ts
         - src/bot/prompt-plan.ts
@@ -82,6 +104,14 @@ contracts:
         - src/bot/intake-contract.test.ts
         - src/bot/prompt-plan.test.ts
         - src/bot/scope.test.ts
+        - src/bot/feishu-signal-delivery.test.ts
+        - src/bot/channel.test.ts
+        - src/card/session-identity.test.ts
+        - src/presentation/session-identity.test.ts
+        - src/signal/protocol.test.ts
+        - src/signal/ingress-policy.test.ts
+        - src/signal/action-log.test.ts
+        - src/signal/correlation-store.test.ts
         - pnpm test
       replay_evidence:
         - Contract-maintained source; replay is the listed carrier test suite plus architecture check.

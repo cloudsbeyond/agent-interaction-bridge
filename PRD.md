@@ -11,21 +11,34 @@ implementation checklist.
 
 ## L0 Problem
 
-Local execution agents can act with broad authority, while human surfaces such
+Local domain agents can act with broad authority, while human surfaces such
 as Feishu/Lark carry identity, context, attachments, approvals, and delivery
 constraints. Agent-Interaction-Bridge needs to mediate between those worlds
 without collapsing channel transport, interaction interpretation,
 presentation, delivery, runtime resources, and execution authority into one
 opaque gateway.
 
+The bridge must also mediate domain-agent-initiated interaction. A proactive
+message and the human reply to it need the same policy, delivery, audit, and
+session-continuity guarantees as a human-initiated task.
+
 ## P0 Scope
 
-P0 is a local-first bounded interaction bridge:
+P0 is a local-first bounded interaction bridge agent:
 
 - Human surface intake over the current Feishu/Lark path.
-- Bridge domain-agent objects for turn facts, surface context, perception,
+- Bridge-agent objects for turn facts, surface context, perception,
   intent, expression, presentation, delivery, tasks, signals, and action logs.
-- Execution-agent handoff to Codex exec or app-server endpoints.
+- Domain-agent handoff to Codex through exec or app-server endpoints.
+- Domain-agent-initiated outbound interaction through bridge policy,
+  presentation, carrier delivery, and ActionLog.
+- Correlation from outbound intent to carrier message, conversation scope, and
+  originating domain-agent session so human replies resume the same task.
+- A compact presentation-only footer on every normal Feishu/Lark reply showing
+  the current Bridge scope and Domain session/thread reference, with each
+  identifier rendered as its final 12 characters without an ellipsis on one
+  `Session：Bridge - <id> | Domain - <id>` line. Markdown and card
+  carriers use quote styling; plain-text carriers omit quote syntax.
 - Gateway modes: `relay` and `adapter`.
 - Runtime Services as the external support plane for helper resources, storage,
   sessions, artifacts, vectors, and resource status.
@@ -37,10 +50,17 @@ P0 is a local-first bounded interaction bridge:
 - Do not use scattered specs or agent-devops notes as product drivers.
 - Do not let architecture YAML records redefine L0 product intent.
 - Do not make bridge helper models choose tools, approve risk, change endpoint
-  profiles, or override execution-agent authority.
+  profiles, or override domain-agent authority.
+- Do not let a domain agent bypass the bridge for normal human interaction or
+  take long-term ownership of carrier credentials and delivery state.
+- Keep direct domain-agent-to-carrier calls only as bootstrap, diagnostic, or
+  fault-degradation paths, not the formal P0 interaction path.
 - Do not move provider, model, storage, vector, artifact, or generic Runtime
   Services implementations back into this repo.
 - Do not make `agent-devops/` a runtime dependency.
+- Do not add ACP, A2A, public proactive ingress, or a Codex plugin/skill
+  transport in P0. Future adapters may reuse AgentSignal without taking Bridge
+  carrier authority.
 
 ## Downstream Chain
 
