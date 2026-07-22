@@ -278,6 +278,13 @@ node ./dist/cli.js service start launchd
 node ./dist/cli.js service status launchd
 ```
 
+`service start launchd` and `service restart launchd` wait up to 30 seconds for
+launchd to report `running`, a process from the current service action to enter
+the registry, and fresh bridge health to report a connected carrier with an
+available execution endpoint. A timeout prints the last observed state and the
+path to `~/.agent-interaction-bridge/logs/launchd.log` instead of reporting a
+false success.
+
 On first start, the bridge opens the Feishu/Lark binding wizard. Keep the
 generated runtime config under `~/.agent-interaction-bridge/`, not in git.
 

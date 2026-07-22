@@ -80,7 +80,9 @@ contracts:
         - src/card/chat-markdown.ts
         - src/card/dispatcher.ts
         - src/card/interaction-card.ts
+        - src/card/managed.ts
         - src/card/presentation-card.ts
+        - src/card/task-approval-card.ts
         - src/card/run-renderer.ts
         - src/card/run-state.ts
         - src/card/text-renderer.ts
@@ -112,6 +114,7 @@ contracts:
         - src/card/card-text.test.ts
         - src/card/feishu-markdown.test.ts
         - src/card/interaction-card.test.ts
+        - src/card/task-approval-card.test.ts
         - src/card/presentation-card.test.ts
         - src/card/run-renderer.test.ts
         - src/presentation/document.test.ts

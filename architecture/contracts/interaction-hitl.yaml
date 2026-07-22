@@ -68,6 +68,7 @@ contracts:
         - src/bot/prompt-plan.ts
         - src/bot/channel.ts
         - src/card/dispatcher.ts
+        - src/card/managed.ts
         - src/commands/index.ts
         - src/signal/timeline.ts
         - src/task/approval-contract.ts
@@ -86,6 +87,7 @@ contracts:
         - src/runtime/interaction-runtime.test.ts
         - src/bot/prompt-plan.test.ts
         - src/bot/channel.test.ts
+        - src/card/task-approval-card.test.ts
         - src/config/schema-agent-endpoint.test.ts
         - src/task/approval-contract.test.ts
         - src/task/run-policy.test.ts

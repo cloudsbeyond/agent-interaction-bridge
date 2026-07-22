@@ -57,10 +57,12 @@ contracts:
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
+        - src/runtime/service-readiness.ts
         - src/runtime/data-contract.ts
         - src/runtime/health.ts
         - src/bot/keepalive.ts
         - src/cli/commands/start.ts
+        - src/cli/commands/service.ts
         - src/cli/commands/status.ts
         - src/cli/commands/doctor.ts
       commands:
@@ -79,10 +81,12 @@ contracts:
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
+        - src/runtime/service-readiness.ts
         - src/runtime/data-contract.ts
         - src/runtime/health.ts
         - src/bot/keepalive.ts
         - src/cli/commands/start.ts
+        - src/cli/commands/service.ts
         - src/cli/commands/status.ts
         - src/cli/commands/doctor.ts
         - src/runtime-services/selector.ts
@@ -94,10 +98,12 @@ contracts:
         - src/config/schema-agent-endpoint.test.ts
         - src/session/store.test.ts
         - src/runtime/launch-agent.test.ts
+        - src/runtime/service-readiness.test.ts
         - src/runtime/data-contract.test.ts
         - src/runtime/health.test.ts
         - src/bot/keepalive.test.ts
         - src/cli/commands/start.test.ts
+        - src/cli/commands/service.test.ts
         - src/cli/commands/status.test.ts
         - src/cli/commands/doctor.test.ts
         - src/test/runtime-home.test.ts
