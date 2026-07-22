@@ -927,6 +927,95 @@ describe('channel gateway modes', () => {
 
     await bridge.disconnect();
   });
+
+  test('consumes a Domain Agent interaction callback only once in its creating scope', async () => {
+    const runs: AgentRunOptions[] = [];
+    const runtimeCall = vi.fn(async (capabilityId: string, input: {
+      id?: string;
+    }) => {
+      if (capabilityId === 'record.upsert') {
+        return {
+          status: 'ok',
+          capabilityId,
+          providerId: 'test-record-store',
+          modelId: 'not-applicable',
+          evidence: [],
+          record: { id: input.id },
+        };
+      }
+      return {
+        status: 'failed',
+        capabilityId,
+        providerId: 'mock-runtime-services',
+        modelId: 'not-applicable',
+        evidence: [{ kind: 'mock_failure', message: 'not needed by this test' }],
+      };
+    });
+    runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
+      {
+        id: 'storage.record_store',
+        kind: 'storage',
+        capability: 'record store',
+        purpose: 'ActionLog',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+    ], runtimeCall));
+    larkMock.state.send.mockResolvedValue({ messageId: 'om_interaction_1' });
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithInteractionSignal(runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-interaction-once.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-interaction-once.json`)),
+      controls: controls(cfg),
+      proactiveCorrelations: new ProactiveCorrelationStore({
+        path: join(tmpdir(), `aib-correlations-${Date.now()}-interaction-once.json`),
+      }),
+    });
+
+    await larkMock.state.handlers?.message?.(message('开始需要审批的任务'));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await vi.waitFor(() => expect(
+      larkMock.state.send.mock.calls.flatMap((call) => collectCallbackValues(call[1])),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hitl_action: 'approve' }),
+    ])));
+    const approve = larkMock.state.send.mock.calls
+      .flatMap((call) => collectCallbackValues(call[1]))
+      .find((value) => value.hitl_action === 'approve');
+    expect(approve).toEqual(expect.objectContaining({
+      __agent_cb: true,
+      interaction_id: 'domain-risk-1',
+    }));
+
+    const click = {
+      chatId: 'oc_123',
+      messageId: 'om_interaction_1',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: approve },
+    } as unknown as CardActionEvent;
+    await larkMock.state.handlers?.cardAction?.(click);
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+    expect(runs[1]?.prompt).toContain('用户已批准交互请求 domain-risk-1');
+    expect(runs[1]?.prompt).not.toContain('__agent_cb');
+
+    await larkMock.state.handlers?.cardAction?.(click);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(runs).toHaveLength(2);
+
+    await larkMock.state.handlers?.cardAction?.({
+      ...click,
+      chatId: 'oc_other',
+      messageId: 'om_copied_interaction',
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(runs).toHaveLength(2);
+
+    await bridge.disconnect();
+  });
 });
 
 function config(preferences: NonNullable<AppConfig['preferences']> & { gatewayMode?: string }): AppConfig {
@@ -1038,6 +1127,44 @@ function agentWithProactiveSignal(
   };
 }
 
+function agentWithInteractionSignal(runs: AgentRunOptions[]): AgentAdapter {
+  let count = 0;
+  return {
+    id: 'agent_runtime.codex_app_server',
+    displayName: 'Codex App Server Test',
+    isAvailable: async () => true,
+    run(opts: AgentRunOptions) {
+      runs.push(opts);
+      const current = count++;
+      return {
+        pid: 123,
+        events: (async function* () {
+          yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+          if (current === 0) {
+            yield {
+              type: 'signal' as const,
+              signal: {
+                id: 'domain-risk-1',
+                kind: 'risk_approval' as const,
+                title: '批准危险操作',
+                summary: '需要人工确认后继续。',
+                risk: 'destructive filesystem change',
+                proposedAction: 'remove generated output',
+                actions: ['approve', 'reject'],
+              },
+            };
+          } else {
+            yield { type: 'text' as const, delta: '已按首次决定继续。' };
+          }
+          yield { type: 'done' as const, sessionId: 'session_1' };
+        })(),
+        stop: async () => {},
+        waitForExit: async () => true,
+      };
+    },
+  };
+}
+
 function runtimeContext(resources: Array<{
   id: string;
   kind: string;
@@ -1078,6 +1205,20 @@ function collectButtonValues(node: unknown): Record<string, unknown>[] {
     ? [value.value as Record<string, unknown>]
     : [];
   return own.concat(Object.values(value).flatMap(collectButtonValues));
+}
+
+function collectCallbackValues(node: unknown): Record<string, unknown>[] {
+  if (!node || typeof node !== 'object') return [];
+  const value = node as Record<string, unknown>;
+  const behaviors = Array.isArray(value.behaviors) ? value.behaviors : [];
+  const own = behaviors.flatMap((behavior) => {
+    if (!behavior || typeof behavior !== 'object') return [];
+    const callbackValue = (behavior as { value?: unknown }).value;
+    return callbackValue && typeof callbackValue === 'object'
+      ? [callbackValue as Record<string, unknown>]
+      : [];
+  });
+  return own.concat(Object.values(value).flatMap(collectCallbackValues));
 }
 
 function latestApprovalCard(): object | undefined {

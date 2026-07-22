@@ -14,11 +14,10 @@ import type { TaskApprovalStore } from '../task/approval-store';
 import type { TaskStatusStore } from '../task/status-store';
 import type { WorkspaceStore } from '../workspace/store';
 
-/** Marker key on a button's value object that flags the cardAction as
- * a callback that should be forwarded back to the agent instead
- * of dispatched to a built-in command handler. The double-underscore
- * sigils make it virtually impossible to collide with normal payload
- * fields the agent might set.
+/** Marker key on a button's value object that flags a Bridge-rendered
+ * interaction callback. The dispatcher still requires the structured
+ * interaction id/action and a pending decision in the current scope before
+ * it can forward the decision to the Domain Agent.
  */
 const AGENT_CALLBACK_MARKER = '__agent_cb';
 
@@ -87,10 +86,8 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     return;
   }
 
-  // Agent-driven callback: the button was rendered by Codex itself via
-  // lark-cli, with `__agent_cb` set on the value. Forward the click back
-  // into the scope's pending queue so Codex resumes its session and sees
-  // the click as a follow-up message, with full context of what it sent.
+  // Domain Agent interaction callback: resolve the Bridge-owned pending
+  // decision before resuming the scoped Domain Agent session.
   if (AGENT_CALLBACK_MARKER in payload) {
     forwardToAgent(deps, payload, formValue, scope, threadId);
     return;
@@ -188,16 +185,26 @@ function forwardToAgent(
 ): void {
   // Strip the marker so the agent only sees the meaningful fields it set.
   const { [AGENT_CALLBACK_MARKER]: _marker, ...agentPayload } = payload;
-  const merged = formValue ? { ...agentPayload, form_value: formValue } : agentPayload;
   const interactionId =
     typeof agentPayload.interaction_id === 'string' ? agentPayload.interaction_id : undefined;
   const action = typeof agentPayload.hitl_action === 'string' ? agentPayload.hitl_action : undefined;
-  if (interactionId && action) {
-    deps.signalTimeline.resolve(scope, interactionId, {
-      action,
-      actorId: deps.evt.operator.openId,
-    });
+  if (!interactionId || !action) {
+    log.warn('cardAction', 'invalid-agent-interaction', { scope });
+    return;
   }
+  const resolved = deps.signalTimeline.resolve(scope, interactionId, {
+    action,
+    actorId: deps.evt.operator.openId,
+  });
+  if (!resolved) {
+    log.warn('cardAction', 'stale-agent-interaction', {
+      scope,
+      interactionId,
+      action,
+    });
+    return;
+  }
+  const merged = formValue ? { ...agentPayload, form_value: formValue } : agentPayload;
   log.info('cardAction', 'forward-agent', {
     scope,
     payload: JSON.stringify(merged).slice(0, 200),
