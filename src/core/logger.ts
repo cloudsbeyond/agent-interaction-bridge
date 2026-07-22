@@ -58,6 +58,10 @@ function logsDir(): string {
 }
 
 function getStream(): WriteStream | null {
+  // Test workers exercise channel behavior against an isolated runtime home,
+  // but file streams can outlive a worker long enough to race test-home cleanup.
+  // Keep test diagnostics on captured stdout/stderr; production keeps JSONL.
+  if (process.env.VITEST === 'true') return null;
   const today = todayKey();
   if (stream && currentDate === today) return stream;
   if (stream) {

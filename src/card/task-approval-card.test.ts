@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { taskApprovalCard } from './task-approval-card';
+import { taskApprovalCard, taskApprovalDecisionCard } from './task-approval-card';
 
 function collectButtons(node: unknown): Record<string, unknown>[] {
   if (!node || typeof node !== 'object') return [];
@@ -49,5 +49,32 @@ describe('taskApprovalCard', () => {
     });
 
     expect(JSON.stringify(card)).toContain('agent_profile.codex_guest');
+  });
+
+  it('renders button-free terminal states for accepted approval decisions', () => {
+    const approval = {
+      id: 'approval-1',
+      task: 'review the release',
+      cwd: '/repo',
+      sessionId: 'thread-abc',
+      agentProfileId: 'agent_profile.codex_host',
+      createdAt: 1234,
+    };
+
+    const execute = taskApprovalDecisionCard(approval, 'execute');
+    const modify = taskApprovalDecisionCard(approval, 'modify');
+    const cancel = taskApprovalDecisionCard(approval, 'cancel');
+
+    expect(collectButtons(execute)).toEqual([]);
+    expect(collectButtons(modify)).toEqual([]);
+    expect(collectButtons(cancel)).toEqual([]);
+    expect(JSON.stringify(execute)).toContain('已批准');
+    expect(JSON.stringify(execute)).toContain('正在执行');
+    expect(JSON.stringify(modify)).toContain('已取消');
+    expect(JSON.stringify(modify)).toContain('重新发送修改后的任务');
+    expect(JSON.stringify(cancel)).toContain('已停止');
+    expect(JSON.stringify(cancel)).toContain('未执行 Agent');
+    expect(JSON.stringify(execute)).toContain('review the release');
+    expect(JSON.stringify(execute)).toContain('agent_profile.codex_host');
   });
 });

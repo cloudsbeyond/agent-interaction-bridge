@@ -13,9 +13,10 @@ export interface CodexAdapterOptions {
 
 type CodexChild = ChildProcessByStdio<Writable, Readable, Readable>;
 const MACOS_CODEX_APP_BINARY = '/Applications/Codex.app/Contents/Resources/codex';
+const MACOS_CHATGPT_APP_BINARY = '/Applications/ChatGPT.app/Contents/Resources/codex';
 
 export function codexBinaryCandidates(binary?: string): string[] {
-  return [binary ?? 'codex', MACOS_CODEX_APP_BINARY].filter(
+  return [binary ?? 'codex', MACOS_CODEX_APP_BINARY, MACOS_CHATGPT_APP_BINARY].filter(
     (value, index, all) => all.indexOf(value) === index,
   );
 }

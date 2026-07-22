@@ -254,8 +254,9 @@ agent-interaction-bridge start
 ```
 
 `npm i -g agent-interaction-bridge` only works after an npm release. If Codex is
-installed through the Mac app but not on `PATH`, the runtime also tries
-`/Applications/Codex.app/Contents/Resources/codex`.
+installed through a Mac desktop app but not on `PATH`, the runtime also tries
+the embedded binaries under `/Applications/Codex.app` and
+`/Applications/ChatGPT.app`.
 
 Optional Codex app-server endpoint:
 
@@ -276,6 +277,13 @@ node ./dist/cli.js service install launchd --agent-endpoint app-server
 node ./dist/cli.js service start launchd
 node ./dist/cli.js service status launchd
 ```
+
+`service start launchd` and `service restart launchd` wait up to 30 seconds for
+launchd to report `running`, a process from the current service action to enter
+the registry, and fresh bridge health to report a connected carrier with an
+available execution endpoint. A timeout prints the last observed state and the
+path to `~/.agent-interaction-bridge/logs/launchd.log` instead of reporting a
+false success.
 
 On first start, the bridge opens the Feishu/Lark binding wizard. Keep the
 generated runtime config under `~/.agent-interaction-bridge/`, not in git.
@@ -333,8 +341,12 @@ Use `/help` or `agent-interaction-bridge --help` for the full command list.
 
 `agent-interaction-bridge doctor` is a read-only local readiness check. It
 summarizes config completeness, Codex execution endpoint availability, Runtime
-Services helper model/storage resources, and future compute stubs without
-printing secrets.
+Services helper model/storage resources, per-process carrier health, and future
+compute stubs without printing secrets. A live PID without a fresh connected
+health snapshot is reported as `attention`, not as a healthy running bot.
+When no bot process exists, runtime health is reported as `not running` rather
+than `ok`; readiness still describes whether local dependencies are ready to
+start.
 
 ## Model Providers
 
@@ -462,7 +474,7 @@ Runtime home defaults to `~/.agent-interaction-bridge/`; override with
 `AGENT_INTERACTION_BRIDGE_HOME`.
 
 Do not commit real `config.json`, `secrets.enc`, sessions, workspaces, process
-registries, media, logs, or Runtime Services artifacts, storage manifests,
+registries, bounded health snapshots, media, logs, or Runtime Services artifacts, storage manifests,
 vector indexes, model-provider runtime config, and model secrets. Use
 `config.example.json` only as a shape reference.
 
@@ -476,6 +488,9 @@ security issues privately.
 The commands below validate the product package. Repo-local AI-native build
 governance, contract indexing, drift checks, and replay harness guidance live in
 [agent-devops/](./agent-devops/) and are not published in the npm package.
+The canonical `pnpm test` command creates and removes an isolated runtime home;
+tests must never write fixtures or reply-debug records into the operator's live
+runtime directory.
 
 ```bash
 pnpm test

@@ -36,13 +36,15 @@ contracts:
         - Runtime Services may support many domain agents, but access must be typed and raw state must not be reused across agents.
         - Provider-side logs or model memory are external-provider-state and must not be trusted for bridge correctness.
         - LaunchAgent is a macOS runtime adapter, not a generic architecture primitive.
+        - A process registry entry proves only PID liveness; bounded per-process health snapshots are keyed by process id, owned and cleaned up by the bridge process, hidden from execution endpoints, and must expose fresh carrier and endpoint state for truthful operator readiness.
+        - Canonical tests must use an isolated runtime home and must not write logs, reply-debug records, sessions, or health snapshots into the operator runtime home.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+          command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+      generation_command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -55,9 +57,16 @@ contracts:
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
+        - src/runtime/service-readiness.ts
         - src/runtime/data-contract.ts
+        - src/runtime/health.ts
+        - src/bot/keepalive.ts
+        - src/cli/commands/start.ts
+        - src/cli/commands/service.ts
+        - src/cli/commands/status.ts
+        - src/cli/commands/doctor.ts
       commands:
-        - pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime-services/selector.test.ts
+        - pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
         - pnpm typecheck
     l4:
       owner: agent
@@ -72,7 +81,14 @@ contracts:
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
+        - src/runtime/service-readiness.ts
         - src/runtime/data-contract.ts
+        - src/runtime/health.ts
+        - src/bot/keepalive.ts
+        - src/cli/commands/start.ts
+        - src/cli/commands/service.ts
+        - src/cli/commands/status.ts
+        - src/cli/commands/doctor.ts
         - src/runtime-services/selector.ts
         - src/bot/process-pool.ts
         - src/bot/active-runs.ts
@@ -82,9 +98,17 @@ contracts:
         - src/config/schema-agent-endpoint.test.ts
         - src/session/store.test.ts
         - src/runtime/launch-agent.test.ts
+        - src/runtime/service-readiness.test.ts
         - src/runtime/data-contract.test.ts
+        - src/runtime/health.test.ts
+        - src/bot/keepalive.test.ts
+        - src/cli/commands/start.test.ts
+        - src/cli/commands/service.test.ts
+        - src/cli/commands/status.test.ts
+        - src/cli/commands/doctor.test.ts
+        - src/test/runtime-home.test.ts
         - src/runtime-services/selector.test.ts
       replay_evidence:
-        - Critical contract-maintained source; replay is runtime data harness plus architecture check.
+        - Critical contract-maintained source; replay is runtime data, network/wake-up recovery, transactional restart, truthful doctor, and test-home isolation harness plus architecture check.
       hand_edit_guard: Update runtime-data contract before changing persistence, secret, or LaunchAgent semantics.
     stop_condition: Return to L0-L2 when bridge runtime files, secrets, Runtime Services handoff, or service behavior change authority or persistence semantics.

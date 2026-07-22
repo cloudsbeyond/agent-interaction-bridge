@@ -1,4 +1,5 @@
 import type { PendingApproval } from '../task/approval-store';
+import type { ApprovalDecisionAction } from '../task/approval-contract';
 import {
   displayHomeRelativePath,
   escapeInlineCode,
@@ -14,28 +15,23 @@ interface ButtonSpec {
 
 const CALLBACK_MARKER = '__agent_cb';
 
+type ApprovalCardInput = Pick<
+  PendingApproval,
+  'id' | 'task' | 'cwd' | 'sessionId' | 'model' | 'agentProfileId' | 'createdAt'
+>;
+
 export function taskApprovalCard(
-  approval: Pick<
-    PendingApproval,
-    'id' | 'task' | 'cwd' | 'sessionId' | 'model' | 'agentProfileId' | 'createdAt'
-  >,
+  approval: ApprovalCardInput,
 ): object {
-  const session = approval.sessionId ? `\`${escapeInlineCode(approval.sessionId.slice(0, 8))}…\`` : '(新会话)';
-  const model = approval.model ? `\`${escapeInlineCode(approval.model)}\`` : '(默认)';
-  const profile = approval.agentProfileId ? `\`${escapeInlineCode(approval.agentProfileId)}\`` : '(默认)';
   return {
     config: { wide_screen_mode: true, update_multi: true },
     header: { title: { tag: 'plain_text', content: 'Agent 执行审批' } },
     elements: [
       divMd(
         [
-          `**任务**：${escapeLarkMarkdown(truncateText(approval.task, 600))}`,
+          ...approvalDetailLines(approval),
           '**状态**：待审批',
           '**计划**：点击执行后启动 agent runtime；点击修改会取消本次审批，重新发送修改后的任务即可。',
-          `**cwd**：\`${escapeInlineCode(displayHomeRelativePath(approval.cwd))}\``,
-          `**session**：${session}`,
-          `**model**：${model}`,
-          `**profile**：${profile}`,
         ].join('\n'),
       ),
       { tag: 'hr' },
@@ -46,6 +42,47 @@ export function taskApprovalCard(
       ]),
     ],
   };
+}
+
+export function taskApprovalDecisionCard(
+  approval: ApprovalCardInput,
+  action: ApprovalDecisionAction,
+): object {
+  const copy = {
+    execute: { status: '已批准', detail: 'Agent 正在执行。' },
+    modify: { status: '已取消', detail: '请重新发送修改后的任务。' },
+    cancel: { status: '已停止', detail: '未执行 Agent。' },
+  } as const;
+  return {
+    config: { wide_screen_mode: true, update_multi: true },
+    header: { title: { tag: 'plain_text', content: 'Agent 执行审批' } },
+    elements: [
+      divMd(
+        [
+          ...approvalDetailLines(approval),
+          `**状态**：${copy[action].status}`,
+          `**结果**：${copy[action].detail}`,
+        ].join('\n'),
+      ),
+    ],
+  };
+}
+
+function approvalDetailLines(approval: ApprovalCardInput): string[] {
+  const session = approval.sessionId
+    ? `\`${escapeInlineCode(approval.sessionId.slice(0, 8))}…\``
+    : '(新会话)';
+  const model = approval.model ? `\`${escapeInlineCode(approval.model)}\`` : '(默认)';
+  const profile = approval.agentProfileId
+    ? `\`${escapeInlineCode(approval.agentProfileId)}\``
+    : '(默认)';
+  return [
+    `**任务**：${escapeLarkMarkdown(truncateText(approval.task, 600))}`,
+    `**cwd**：\`${escapeInlineCode(displayHomeRelativePath(approval.cwd))}\``,
+    `**session**：${session}`,
+    `**model**：${model}`,
+    `**profile**：${profile}`,
+  ];
 }
 
 function callbackValue(action: 'execute' | 'modify' | 'cancel', id: string): Record<string, unknown> {

@@ -61,7 +61,66 @@ describe('doctor cli helpers', () => {
     expect(output).toContain('ECONNREFUSED');
     expect(output).toContain('missing runtime services resources: unavailable');
   });
+
+  test('marks a registered bot without a fresh health snapshot as attention', () => {
+    const output = formatDoctorReport({
+      status: {
+        ...completeStatus({ runningBots: 1 }),
+        botHealth: [],
+      } as unknown as CliStatus,
+      resources: requiredResources(),
+    });
+
+    expect(output).toContain('readiness: attention');
+    expect(output).toContain('connected bots: 0/1');
+    expect(output).toContain('runtime health: missing');
+  });
+
+  test('reports runtime health as not running when no bot process exists', () => {
+    const output = formatDoctorReport({
+      status: completeStatus({ runningBots: 0, botHealth: [] }),
+      resources: requiredResources(),
+    });
+
+    expect(output).toContain('connected bots: 0/0');
+    expect(output).toContain('runtime health: not running');
+    expect(output).not.toContain('runtime health: ok');
+  });
+
+  test('marks a reconnecting bot as attention even when config and dependencies are ready', () => {
+    const output = formatDoctorReport({
+      status: {
+        ...completeStatus({ runningBots: 1 }),
+        botHealth: [
+          {
+            processId: 'proc-1',
+            state: 'reconnecting',
+            updatedAt: '2026-07-22T06:00:00.000Z',
+            fresh: true,
+            issue: 'ws_reconnecting',
+          },
+        ],
+      } as unknown as CliStatus,
+      resources: requiredResources(),
+    });
+
+    expect(output).toContain('readiness: attention');
+    expect(output).toContain('connected bots: 0/1');
+    expect(output).toContain('proc-1: reconnecting');
+    expect(output).toContain('ws_reconnecting');
+  });
 });
+
+function requiredResources() {
+  return runtimeResources([
+    { id: 'model.language_completion', status: 'available', provider: 'runtime-language-provider:primary' },
+    { id: 'model.image_generation', status: 'available', provider: 'runtime-vision-provider:primary' },
+    { id: 'model.embedding', status: 'available', provider: 'runtime-embedding-provider:primary' },
+    { id: 'storage.artifact_store', status: 'available', provider: 'runtime-artifact-store' },
+    { id: 'storage.vector_index', status: 'available', provider: 'runtime-vector-store' },
+    { id: 'storage.record_store', status: 'available', provider: 'runtime-record-store' },
+  ]);
+}
 
 function completeStatus(overrides: Partial<CliStatus>): CliStatus {
   return {
@@ -69,6 +128,7 @@ function completeStatus(overrides: Partial<CliStatus>): CliStatus {
     configPath: '/tmp/aib/config.json',
     configComplete: true,
     runningBots: 0,
+    botHealth: [],
     agentEndpoint: 'exec',
     gatewayMode: 'adapter',
     runtimeServices: {

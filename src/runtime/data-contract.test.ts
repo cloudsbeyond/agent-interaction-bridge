@@ -17,6 +17,7 @@ describe('runtime data contract', () => {
       'sessions.json',
       'workspaces.json',
       'processes.json',
+      'health/',
       'media/',
       'artifacts/',
       'db/',

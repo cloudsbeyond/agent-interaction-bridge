@@ -355,10 +355,18 @@ tasks, delivery result, and user feedback.
 
 Owns local operator state outside the repository:
 `~/.agent-interaction-bridge/` config, bridge app secrets, sessions,
-workspaces, process registries, media, and logs. Runtime Services state lives
+workspaces, process registries, bounded per-process carrier health snapshots,
+media, and logs. A process record proves only that a PID is alive; operator
+readiness requires a fresh connected health snapshot. Runtime Services state lives
 under `~/.agent-runtime-services/` by default and owns model-provider config,
 model secrets, artifacts, sqlite manifests, vector indexes, and model smoke
 state. Runtime state must not be committed.
+
+Runtime health snapshots are `bounded-state`: the bridge process owns them,
+the process registry id is the key, the process lifetime is the lifetime, and
+graceful or exit cleanup removes them. Execution endpoints cannot read this
+state. A leftover snapshot is diagnostic residue only and becomes unhealthy
+after the freshness window; it never proves that a carrier is connected.
 
 ### Runtime Services
 

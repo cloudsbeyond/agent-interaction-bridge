@@ -115,6 +115,7 @@ describe('codexBinaryCandidates', () => {
     expect(codexBinaryCandidates('/tmp/codex')).toEqual([
       '/tmp/codex',
       '/Applications/Codex.app/Contents/Resources/codex',
+      '/Applications/ChatGPT.app/Contents/Resources/codex',
     ]);
   });
 
@@ -122,6 +123,7 @@ describe('codexBinaryCandidates', () => {
     expect(codexBinaryCandidates()).toEqual([
       'codex',
       '/Applications/Codex.app/Contents/Resources/codex',
+      '/Applications/ChatGPT.app/Contents/Resources/codex',
     ]);
   });
 });

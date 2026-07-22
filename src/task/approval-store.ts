@@ -52,6 +52,16 @@ export class TaskApprovalStore {
     return this.byId.delete(id);
   }
 
+  cancelScope(scope: string): number {
+    let cancelled = 0;
+    for (const [id, approval] of this.byId) {
+      if (approval.scope !== scope) continue;
+      this.byId.delete(id);
+      cancelled += 1;
+    }
+    return cancelled;
+  }
+
   latestForScope(scope: string): PendingApproval | undefined {
     return [...this.byId.values()]
       .filter((a) => a.scope === scope)

@@ -35,13 +35,14 @@ contracts:
         - Storage CLI must pass explicit Runtime Services `namespace` and `tableName` params from config or operator overrides instead of relying on bridge-owned storage defaults.
         - Storage CLI output may expose local artifact/vector paths and metadata, but must not print artifact bytes or grant execution endpoint authority.
         - Doctor CLI must stay read-only and separate local required resources from future compute stubs.
+        - Status and doctor must distinguish a live process from a fresh connected carrier; missing, stale, reconnecting, degraded, stopped, or endpoint-unavailable health must not be reported as ready.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
+          command: pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
+      generation_command: pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -58,7 +59,7 @@ contracts:
         - src/card/account-cards.ts
         - src/card/config-card.ts
       commands:
-        - pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
+        - pnpm test -- src/cli/commands/status.test.ts src/cli/commands/resources.test.ts src/cli/commands/models.test.ts src/cli/commands/storage.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/cli/commands/secrets.test.ts src/card/templates.test.ts
         - pnpm typecheck
     l4:
       owner: agent
@@ -71,6 +72,7 @@ contracts:
         - src/cli/commands/doctor.ts
         - src/cli/commands/secrets.ts
         - src/cli/commands/service.ts
+        - src/runtime/service-readiness.ts
         - src/cli/commands/start.ts
         - src/cli/commands/status.ts
         - src/cli/commands/registry.ts
@@ -86,11 +88,14 @@ contracts:
         - src/cli/commands/models.test.ts
         - src/cli/commands/storage.test.ts
         - src/cli/commands/doctor.test.ts
+        - src/cli/commands/start.test.ts
+        - src/cli/commands/service.test.ts
+        - src/runtime/service-readiness.test.ts
         - src/cli/commands/secrets.test.ts
         - src/cli/commands/registry.test.ts
         - src/commands/registry.test.ts
         - src/card/templates.test.ts
       replay_evidence:
-        - Critical contract-maintained commands; replay is CLI and in-chat command registry harness.
+        - Critical contract-maintained commands; replay is CLI, truthful runtime-health reporting, transactional restart, and in-chat command registry harness.
       hand_edit_guard: Update command authority and stub policy before changing command behavior.
     stop_condition: Return to L0-L2 before turning draft command stubs into durable operator workflows.

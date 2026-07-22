@@ -11,7 +11,8 @@ import { prepareAgentProfileRunPlan } from '../agent/profile-policy';
 import { handleCardAction } from '../card/dispatcher';
 import { renderPresentationCard } from '../card/presentation-card';
 import { renderCard } from '../card/run-renderer';
-import { taskApprovalCard } from '../card/task-approval-card';
+import { isManaged, sendManagedCard, updateManagedCard } from '../card/managed';
+import { taskApprovalCard, taskApprovalDecisionCard } from '../card/task-approval-card';
 import {
   finalizeIfRunning,
   initialState,
@@ -67,7 +68,12 @@ import {
 import type { StatelessIntentJudge } from '../interaction/intent';
 import { createBridgeStatelessIntentJudge } from '../interaction/model-judge';
 import { assessToolRisk } from '../interaction/risk-policy';
-import { parseApprovalDecision, TaskApprovalStore } from '../task/approval-store';
+import type { ApprovalDecisionAction } from '../task/approval-contract';
+import {
+  parseApprovalDecision,
+  TaskApprovalStore,
+  type PendingApproval,
+} from '../task/approval-store';
 import { decideRunPolicy } from '../task/run-policy';
 import { TaskStatusStore, type TaskLifecycle } from '../task/status-store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -86,6 +92,7 @@ import { ActiveRuns, type RunHandle } from './active-runs';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { startKeepalive } from './keepalive';
+import type { RuntimeHealthUpdate } from '../runtime/health';
 import { configureNetwork } from './network-config';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
@@ -98,6 +105,7 @@ import { sendFeishuSignalInputs } from './feishu-signal-delivery';
 import { writeFeishuReplyDebugRecord } from './feishu-reply-debug';
 import {
   buildFeishuUserText,
+  normalizeFeishuCommandContent,
   renderFeishuMessageMetadataBlock,
 } from './intake-contract';
 import { validateFeishuRawInboundEvent } from './feishu-raw-event-contract';
@@ -176,10 +184,19 @@ export interface StartChannelDeps {
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   controls: Controls;
+  onHealth?: (update: RuntimeHealthUpdate) => void | Promise<void>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
-  const { cfg, agent, sessions, workspaces, controls } = deps;
+  const { cfg, agent, sessions, workspaces, controls, onHealth } = deps;
+  const reportHealth = async (update: RuntimeHealthUpdate): Promise<void> => {
+    if (!onHealth) return;
+    try {
+      await onHealth(update);
+    } catch (err) {
+      log.fail('runtime-health', err, { step: 'update' });
+    }
+  };
   const activeRuns = new ActiveRuns();
   const approvals = new TaskApprovalStore();
   const taskStatus = new TaskStatusStore();
@@ -309,6 +326,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessions,
           workspaces,
           activeRuns,
+          approvals,
           taskStatus,
           signalTimeline,
           pending,
@@ -329,6 +347,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessions,
           workspaces,
           activeRuns,
+          approvals,
           agent,
           controls,
           pending,
@@ -348,6 +367,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     reconnecting: () => {
       consecutiveReconnects++;
       log.warn('ws', 'reconnecting', { consecutive: consecutiveReconnects });
+      void reportHealth({
+        state: 'reconnecting',
+        issue: 'ws_reconnecting',
+        reconnectAttempts: consecutiveReconnects,
+      });
       // Stdout escalation — surface jitter that's hidden in the file log.
       if (consecutiveReconnects === 3) {
         console.error('⚠️ 已连续重连 3 次,网络可能不稳。');
@@ -362,6 +386,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         log.info('ws', 'reconnected');
       }
       consecutiveReconnects = 0;
+      void reportHealth({ state: 'connected' });
     },
     // Classify common WS errors into the `network` phase so /doctor and grep
     // can find them without scanning generic `ws.fail` entries.
@@ -369,17 +394,30 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       const msg = err?.message ?? String(err);
       if (/ENOTFOUND|getaddrinfo/.test(msg)) {
         log.fail('network', err, { kind: 'dns', code: err.code });
+        void reportHealth({ state: 'degraded', issue: 'network_dns' });
       } else if (/handshake|did not complete/.test(msg)) {
         log.fail('network', err, { kind: 'handshake-timeout', code: err.code });
+        void reportHealth({ state: 'degraded', issue: 'network_handshake_timeout' });
       } else if (/timeout/i.test(msg)) {
         log.fail('network', err, { kind: 'timeout', code: err.code });
+        void reportHealth({ state: 'degraded', issue: 'network_timeout' });
       } else {
         log.fail('ws', err, { code: err.code });
+        void reportHealth({ state: 'degraded', issue: 'ws_error' });
       }
     },
   });
 
-  await channel.connect();
+  await reportHealth({ state: 'starting', issue: 'carrier_connecting' });
+  try {
+    await channel.connect();
+  } catch (err) {
+    await reportHealth({ state: 'degraded', issue: 'carrier_connect_failed' });
+    await channel.disconnect().catch((disconnectError) =>
+      log.fail('ws', disconnectError, { step: 'failed-connect-cleanup' }),
+    );
+    throw err;
+  }
 
   const identity = channel.botIdentity;
   log.info('ws', 'connected', {
@@ -389,6 +427,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     appId: cfg.accounts.app.id,
     procId: controls.processId,
   });
+  await reportHealth({ state: 'connected' });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
   // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
@@ -402,6 +441,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     domain: probeDomain,
     forceReconnect: () => controls.restart(),
+    onHealth: reportHealth,
   });
 
   return {
@@ -414,6 +454,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       await channel.disconnect();
       await activeRuns.stopAll();
       await Promise.allSettled([sessions.flush(), workspaces.flush()]);
+      await reportHealth({ state: 'stopped', issue: 'carrier_stopped' });
     },
   };
 }
@@ -424,6 +465,7 @@ interface IntakeDeps {
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
+  approvals: TaskApprovalStore;
   taskStatus: TaskStatusStore;
   signalTimeline: SignalTimelineStore;
   pending: PendingQueue;
@@ -439,13 +481,17 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     sessions,
     workspaces,
     activeRuns,
+    approvals,
     taskStatus,
     signalTimeline,
     pending,
-    msg,
     controls,
     chatModeCache,
   } = deps;
+  const normalizedContent = normalizeFeishuCommandContent(deps.msg.content);
+  const msg = normalizedContent === deps.msg.content
+    ? deps.msg
+    : { ...deps.msg, content: normalizedContent };
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   if (msg.raw !== undefined) {
     const rawValidation = validateFeishuRawInboundEvent(msg.raw);
@@ -517,6 +563,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     workspaces,
     agent,
     activeRuns,
+    approvals,
     taskStatus,
     signalTimeline,
     controls,
@@ -548,6 +595,24 @@ interface RunBatchDeps {
   getRuntimeServicesContext: () => Promise<RuntimeServicesPortContext | undefined>;
   getStatelessIntentJudge: () => Promise<StatelessIntentJudge | undefined>;
   gatewayModeDegradeNotices: Set<string>;
+}
+
+async function settleApprovalCard(
+  channel: LarkChannel,
+  messageId: string,
+  approval: PendingApproval,
+  action: ApprovalDecisionAction,
+): Promise<void> {
+  if (!isManaged(messageId)) return;
+  try {
+    await updateManagedCard(channel, messageId, taskApprovalDecisionCard(approval, action));
+  } catch (err) {
+    log.warn('approval', 'card-update-failed', {
+      approvalId: approval.id,
+      action,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -689,18 +754,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   const decision = parseApprovalDecision(lastMsg.content);
   if (decision) {
+    const pendingApproval = approvals.get(decision.approvalId);
+    const approvalInScope = pendingApproval?.scope === scope ? pendingApproval : undefined;
     const approval = decision.action === 'execute'
-      ? approvals.consume(decision.approvalId)
-      : approvals.get(decision.approvalId);
+      ? approvalInScope && approvals.consume(decision.approvalId)
+      : approvalInScope;
     if (!approval) {
       turnTrace.record('approval_missing', {
         approvalId: decision.approvalId,
         action: decision.action,
+        scopeMatch: Boolean(approvalInScope),
       });
       await sendReplyMarkdown(channel, chatId, '这张审批卡片已过期或已处理。', sendOpts);
       await flushTurnTrace();
       return;
     }
+    await settleApprovalCard(channel, lastMsg.messageId, approval, decision.action);
     if (decision.action === 'modify') {
       approvals.cancel(decision.approvalId);
       taskStatus.finish(scope, 'cancelled');
@@ -909,7 +978,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       log.info('approval', 'skipped', { scope, reason: 'auto-run', policy: policy.source });
     } else {
       taskStatus.markPending(scope, { task: taskText, cwd });
-      await channel.send(chatId, { card: taskApprovalCard(approval) }, sendOpts);
+      await sendManagedCard(channel, chatId, taskApprovalCard(approval), lastMsg.messageId);
       log.info('approval', 'created', { scope, approvalId: approval.id });
       turnTrace.record('approval_required', {
         approvalId: approval.id,
@@ -1002,6 +1071,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     return { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
   };
   const finishTask = (lifecycle: Exclude<TaskLifecycle, 'pending_approval' | 'running'>): void => {
+    if (!taskStatus.snapshot(scope)) return;
     taskStatus.finish(scope, lifecycle);
     signalTimeline.append(scope, {
       kind: 'final_result',

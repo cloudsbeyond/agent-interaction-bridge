@@ -86,6 +86,10 @@ export class TaskStatusStore {
     const end = current.finishedAt ?? this.now();
     return { ...current, elapsedMs: current.startedAt ? end - current.startedAt : 0 };
   }
+
+  clear(scope: string): boolean {
+    return this.byScope.delete(scope);
+  }
 }
 
 function truncateTail(s: string, max: number): string {
