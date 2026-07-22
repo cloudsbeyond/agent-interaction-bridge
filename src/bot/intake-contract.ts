@@ -77,6 +77,19 @@ export function buildFeishuUserText(
   return attachments.length > 0 ? '请看下面的附件。' : '';
 }
 
+export function normalizeFeishuCommandContent(content: string): string {
+  const trimmed = content.trim();
+  const match = /^```(?:(plain_text|plaintext|text))?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(
+    trimmed,
+  );
+  if (!match) return content;
+  const lines = (match[2] ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && lines[0]?.startsWith('/') ? lines[0] : content;
+}
+
 export function toInteractionAttachments(
   attachments: LocalAttachment[],
 ): InteractionAttachment[] {

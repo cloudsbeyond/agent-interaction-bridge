@@ -2,12 +2,34 @@ import { describe, expect, test } from 'vitest';
 import {
   buildFeishuBridgeContext,
   buildFeishuUserText,
+  normalizeFeishuCommandContent,
   renderFeishuMessageMetadataBlock,
   stripFeishuAttachmentRefs,
   toInteractionAttachments,
 } from './intake-contract';
 
 describe('Feishu intake contract helpers', () => {
+  test('unwraps only a whole single-line fenced slash command', () => {
+    expect(
+      normalizeFeishuCommandContent('```PLAIN_TEXT\n/visual summarize architecture\n```'),
+    ).toBe('/visual summarize architecture');
+    expect(normalizeFeishuCommandContent('```text\n/cd /repo\n```')).toBe('/cd /repo');
+    expect(normalizeFeishuCommandContent('```\n/status\n```')).toBe('/status');
+
+    expect(normalizeFeishuCommandContent('```text\n/cd /repo\n/status\n```')).toBe(
+      '```text\n/cd /repo\n/status\n```',
+    );
+    expect(normalizeFeishuCommandContent('context\n```text\n/status\n```')).toBe(
+      'context\n```text\n/status\n```',
+    );
+    expect(normalizeFeishuCommandContent('```ts\n/status\n```')).toBe(
+      '```ts\n/status\n```',
+    );
+    expect(normalizeFeishuCommandContent('```text\nplain text\n```')).toBe(
+      '```text\nplain text\n```',
+    );
+  });
+
   test('normalizes bridge context without exposing provider payloads', () => {
     expect(
       buildFeishuBridgeContext({

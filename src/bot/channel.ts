@@ -99,6 +99,7 @@ import { sendFeishuSignalInputs } from './feishu-signal-delivery';
 import { writeFeishuReplyDebugRecord } from './feishu-reply-debug';
 import {
   buildFeishuUserText,
+  normalizeFeishuCommandContent,
   renderFeishuMessageMetadataBlock,
 } from './intake-contract';
 import { validateFeishuRawInboundEvent } from './feishu-raw-event-contract';
@@ -478,10 +479,13 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     taskStatus,
     signalTimeline,
     pending,
-    msg,
     controls,
     chatModeCache,
   } = deps;
+  const normalizedContent = normalizeFeishuCommandContent(deps.msg.content);
+  const msg = normalizedContent === deps.msg.content
+    ? deps.msg
+    : { ...deps.msg, content: normalizedContent };
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   if (msg.raw !== undefined) {
     const rawValidation = validateFeishuRawInboundEvent(msg.raw);

@@ -122,6 +122,30 @@ describe('channel gateway modes', () => {
     await bridge.disconnect();
   });
 
+  test('normalizes a fenced single-line visual directive before task planning', async () => {
+    const prompts: string[] = [];
+    const bridge = await startChannel({
+      cfg: config({ gatewayMode: 'relay', messageReply: 'card' }),
+      agent: agentCapturingPrompts(prompts),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-fenced-command.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-fenced-command.json`)),
+      controls: controls(),
+    });
+
+    await larkMock.state.handlers?.message?.(
+      message('```PLAIN_TEXT\n/visual summarize architecture\n```'),
+    );
+    await vi.advanceTimersByTimeAsync(700);
+
+    await vi.waitFor(() => expect(prompts).toHaveLength(1));
+    expect(prompts[0]).toContain('summarize architecture');
+    expect(prompts[0]).not.toContain('/visual');
+    expect(prompts[0]).not.toContain('PLAIN_TEXT');
+    expect(prompts[0]).not.toContain('```');
+
+    await bridge.disconnect();
+  });
+
   test('reports connected and stopped runtime health around the carrier lifecycle', async () => {
     const onHealth = vi.fn(async () => {});
     const bridge = await startChannel({
