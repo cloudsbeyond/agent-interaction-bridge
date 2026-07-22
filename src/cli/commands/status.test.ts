@@ -26,6 +26,16 @@ describe('CLI status command', () => {
       configPath: '/tmp/bridge/config.json',
       loadConfig: async () => cfg,
       readProcesses: () => [{ id: 'a1b2' }, { id: 'c3d4' }],
+      readHealth: async (processId) => ({
+        schemaVersion: 1,
+        processId,
+        pid: 1,
+        endpoint: 'exec',
+        endpointAvailable: true,
+        state: 'connected',
+        updatedAt: '2026-07-22T06:00:00.000Z',
+        fresh: true,
+      }),
       isCodexAvailable: async () => true,
     });
 
@@ -34,6 +44,7 @@ describe('CLI status command', () => {
     expect(output).toContain('config: complete');
     expect(output).toContain('app: feishu cli_…cdef');
     expect(output).toContain('running bots: 2');
+    expect(output).toContain('connected bots: 2/2');
     expect(output).toContain('gateway mode: adapter');
     expect(output).toContain('codex: available');
     expect(output).not.toContain('do-not-print');

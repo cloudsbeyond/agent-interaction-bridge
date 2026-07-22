@@ -333,8 +333,9 @@ Use `/help` or `agent-interaction-bridge --help` for the full command list.
 
 `agent-interaction-bridge doctor` is a read-only local readiness check. It
 summarizes config completeness, Codex execution endpoint availability, Runtime
-Services helper model/storage resources, and future compute stubs without
-printing secrets.
+Services helper model/storage resources, per-process carrier health, and future
+compute stubs without printing secrets. A live PID without a fresh connected
+health snapshot is reported as `attention`, not as a healthy running bot.
 
 ## Model Providers
 
@@ -462,7 +463,7 @@ Runtime home defaults to `~/.agent-interaction-bridge/`; override with
 `AGENT_INTERACTION_BRIDGE_HOME`.
 
 Do not commit real `config.json`, `secrets.enc`, sessions, workspaces, process
-registries, media, logs, or Runtime Services artifacts, storage manifests,
+registries, bounded health snapshots, media, logs, or Runtime Services artifacts, storage manifests,
 vector indexes, model-provider runtime config, and model secrets. Use
 `config.example.json` only as a shape reference.
 
@@ -476,6 +477,9 @@ security issues privately.
 The commands below validate the product package. Repo-local AI-native build
 governance, contract indexing, drift checks, and replay harness guidance live in
 [agent-devops/](./agent-devops/) and are not published in the npm package.
+The canonical `pnpm test` command creates and removes an isolated runtime home;
+tests must never write fixtures or reply-debug records into the operator's live
+runtime directory.
 
 ```bash
 pnpm test

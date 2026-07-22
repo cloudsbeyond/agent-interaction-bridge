@@ -34,7 +34,7 @@
     "public-safety-check": "node tools/public-safety-check.mjs",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node tools/run-tests.mjs",
     "prepublishOnly": "pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts"
   },
   "dependencies": {

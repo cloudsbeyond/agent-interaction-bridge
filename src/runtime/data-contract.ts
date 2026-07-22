@@ -46,6 +46,11 @@ export const RUNTIME_DATA_ENTRIES: RuntimeDataEntry[] = [
     committable: false,
   },
   {
+    path: 'health/',
+    purpose: 'bounded per-process carrier and endpoint health snapshots',
+    committable: false,
+  },
+  {
     path: 'media/',
     purpose: 'downloaded local message media cache',
     committable: false,

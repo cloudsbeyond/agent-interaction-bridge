@@ -7,7 +7,7 @@ import {
   resourceAvailable,
 } from '../../runtime-services/resources';
 import { createRuntimeServicesPortContext } from '../../runtime-services/selector';
-import { collectStatus, type CliStatus } from './status';
+import { collectStatus, isConnectedHealth, type CliStatus } from './status';
 import {
   formatRuntimeServiceFailure,
   formatRuntimeServicesUnavailable,
@@ -53,10 +53,15 @@ export function formatDoctorReport(report: DoctorReport): string {
   const futureStubs = futureResourceIds()
     .map((id) => findRuntimeResource(report.resources, id) ?? missingRuntimeResource(id))
     .filter((resource) => !resourceAvailable(resource));
+  const botHealth = report.status.botHealth ?? [];
+  const connectedBots = botHealth.filter(isConnectedHealth).length;
+  const runtimeHealthReady = report.status.runningBots === 0
+    || connectedBots === report.status.runningBots;
   const readiness = report.status.configComplete
     && report.status.codexAvailable
     && !report.runtimeServicesIssue
     && requiredMissing.length === 0
+    && runtimeHealthReady
     ? 'ok'
     : 'attention';
 
@@ -73,7 +78,21 @@ export function formatDoctorReport(report: DoctorReport): string {
     `runtime services record namespace: ${report.status.runtimeServices.recordNamespace}`,
     `runtime services record table: ${report.status.runtimeServices.recordTableName}`,
     `running bots: ${report.status.runningBots}`,
+    `connected bots: ${connectedBots}/${report.status.runningBots}`,
   ];
+
+  if (report.status.runningBots > botHealth.length) {
+    lines.push('runtime health: missing');
+  } else if (!runtimeHealthReady) {
+    lines.push('runtime health: attention');
+  } else {
+    lines.push('runtime health: ok');
+  }
+  for (const health of botHealth) {
+    const freshness = health.fresh ? 'fresh' : 'stale';
+    const issue = health.issue ? ` issue=${health.issue}` : '';
+    lines.push(`- ${health.processId}: ${health.state} (${freshness})${issue}`);
+  }
 
   if (report.runtimeServicesIssue) {
     lines.push(

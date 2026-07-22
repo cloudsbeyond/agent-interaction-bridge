@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { AgentAdapter } from '../../agent/types';
 import type { AppConfig, AgentEndpointKind } from '../../config/schema';
+import { paths } from '../../config/paths';
 import type { Controls } from '../../commands';
+import { readRuntimeHealth } from '../../runtime/health';
 import { runStart } from './start';
 
 const mocks = vi.hoisted(() => {
@@ -139,6 +141,114 @@ describe('runStart restart', () => {
       expect.objectContaining({ agentEndpoint: 'app-server' }),
     );
   });
+
+  test('keeps the current bridge connected when the replacement endpoint is unavailable', async () => {
+    const currentAgent = agent('exec');
+    const unavailableAgent = agent('app-server', '/tmp/codex-app-server-next', false);
+    mocks.createAgentAdapter
+      .mockReturnValueOnce(currentAgent)
+      .mockReturnValueOnce(unavailableAgent);
+    mocks.loadConfig
+      .mockResolvedValueOnce(config({ agentEndpoint: 'exec' }))
+      .mockResolvedValueOnce(config({
+        agentEndpoint: 'app-server',
+        appServerCwd: '/tmp/codex-app-server-next',
+      }));
+
+    const currentBridge = bridgeFor(currentAgent);
+    mocks.startChannel.mockResolvedValueOnce(currentBridge);
+
+    void runStart({ config: '/tmp/bridge-config.json' });
+    await vi.waitFor(() => expect(mocks.startChannel).toHaveBeenCalledTimes(1));
+    const currentChannelDeps = mocks.startChannel.mock.calls[0]?.[0] as {
+      controls: Controls;
+      onHealth: (update: { state: 'connected' }) => Promise<void>;
+    };
+    const controls = currentChannelDeps.controls;
+    await currentChannelDeps.onHealth({ state: 'connected' });
+
+    await expect(controls.restart()).rejects.toThrow(
+      'Codex endpoint unavailable after config reload: app-server',
+    );
+
+    expect(currentBridge.disconnect).not.toHaveBeenCalled();
+    expect(mocks.startChannel).toHaveBeenCalledTimes(1);
+    expect(await readRuntimeHealth(paths.appDir, 'proc-1')).toEqual(
+      expect.objectContaining({
+        endpoint: 'exec',
+        endpointAvailable: true,
+        state: 'connected',
+      }),
+    );
+  });
+
+  test('restores the previous bridge when replacement channel startup fails', async () => {
+    const currentAgent = agent('exec');
+    const nextAgent = agent('app-server', '/tmp/codex-app-server-next');
+    mocks.createAgentAdapter
+      .mockReturnValueOnce(currentAgent)
+      .mockReturnValueOnce(nextAgent);
+    const currentConfig = config({ agentEndpoint: 'exec' });
+    mocks.loadConfig
+      .mockResolvedValueOnce(currentConfig)
+      .mockResolvedValueOnce(config({
+        agentEndpoint: 'app-server',
+        appServerCwd: '/tmp/codex-app-server-next',
+      }));
+
+    const currentBridge = bridgeFor(currentAgent);
+    const restoredBridge = bridgeFor(currentAgent);
+    mocks.startChannel
+      .mockResolvedValueOnce(currentBridge)
+      .mockRejectedValueOnce(new Error('replacement handshake failed'))
+      .mockResolvedValueOnce(restoredBridge);
+
+    void runStart({ config: '/tmp/bridge-config.json' });
+    await vi.waitFor(() => expect(mocks.startChannel).toHaveBeenCalledTimes(1));
+    const controls = mocks.startChannel.mock.calls[0]?.[0].controls as Controls;
+
+    await expect(controls.restart()).rejects.toThrow('replacement handshake failed');
+
+    expect(currentBridge.disconnect).toHaveBeenCalledTimes(1);
+    expect(mocks.startChannel).toHaveBeenCalledTimes(3);
+    expect(mocks.startChannel.mock.calls[2]?.[0]).toEqual(
+      expect.objectContaining({ cfg: currentConfig, agent: currentAgent }),
+    );
+    expect(controls.cfg).toBe(currentConfig);
+  });
+
+  test('terminates for LaunchAgent recovery when replacement and rollback both fail', async () => {
+    const currentAgent = agent('exec');
+    const nextAgent = agent('app-server', '/tmp/codex-app-server-next');
+    mocks.createAgentAdapter
+      .mockReturnValueOnce(currentAgent)
+      .mockReturnValueOnce(nextAgent);
+    mocks.loadConfig
+      .mockResolvedValueOnce(config({ agentEndpoint: 'exec' }))
+      .mockResolvedValueOnce(config({
+        agentEndpoint: 'app-server',
+        appServerCwd: '/tmp/codex-app-server-next',
+      }));
+
+    mocks.startChannel
+      .mockResolvedValueOnce(bridgeFor(currentAgent))
+      .mockRejectedValueOnce(new Error('replacement handshake failed'))
+      .mockRejectedValueOnce(new Error('rollback handshake failed'));
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 'none'}`);
+    }) as never);
+
+    try {
+      void runStart({ config: '/tmp/bridge-config.json' });
+      await vi.waitFor(() => expect(mocks.startChannel).toHaveBeenCalledTimes(1));
+      const controls = mocks.startChannel.mock.calls[0]?.[0].controls as Controls;
+
+      await expect(controls.restart()).rejects.toThrow('process.exit:1');
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      exit.mockRestore();
+    }
+  });
 });
 
 function config(preferences: NonNullable<AppConfig['preferences']>): AppConfig {
@@ -154,13 +264,23 @@ function config(preferences: NonNullable<AppConfig['preferences']>): AppConfig {
   } as AppConfig;
 }
 
-function agent(kind: AgentEndpointKind, appServerCwd?: string): AgentAdapter {
+function agent(kind: AgentEndpointKind, appServerCwd?: string, available = true): AgentAdapter {
   return {
     id: kind === 'app-server'
       ? `agent_runtime.codex_app_server:${appServerCwd ?? 'default'}`
       : 'agent_runtime.codex_cli',
     displayName: kind,
-    isAvailable: vi.fn(async () => true),
+    isAvailable: vi.fn(async () => available),
     run: vi.fn(),
   } as unknown as AgentAdapter;
+}
+
+function bridgeFor(value: AgentAdapter): {
+  channel: { botIdentity: { name: string; openId: string } };
+  disconnect: ReturnType<typeof vi.fn>;
+} {
+  return {
+    channel: { botIdentity: { name: `bot-${value.id}`, openId: 'ou_bot' } },
+    disconnect: vi.fn(async () => {}),
+  };
 }

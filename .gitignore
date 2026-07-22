@@ -26,6 +26,7 @@ secrets.enc
 sessions.json
 workspaces.json
 processes.json
+health/
 media/
 artifacts/
 db/

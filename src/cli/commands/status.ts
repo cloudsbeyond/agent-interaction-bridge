@@ -14,10 +14,21 @@ import {
 } from '../../config/schema';
 import { loadConfig } from '../../config/store';
 import { readAndPrune } from '../../runtime/registry';
+import { readRuntimeHealth, type RuntimeHealthView } from '../../runtime/health';
 
 interface ProcessLike {
   id: string;
+  pid?: number;
   agentEndpoint?: AgentEndpointKind;
+}
+
+export interface BotRuntimeHealth {
+  processId: string;
+  state: RuntimeHealthView['state'];
+  updatedAt: string;
+  fresh: boolean;
+  endpointAvailable: boolean;
+  issue?: string;
 }
 
 export interface CliStatus {
@@ -29,6 +40,7 @@ export interface CliStatus {
     tenant: string;
   };
   runningBots: number;
+  botHealth: BotRuntimeHealth[];
   agentEndpoint: AgentEndpointKind;
   gatewayMode: GatewayMode;
   runtimeServices: {
@@ -47,6 +59,7 @@ export interface CollectStatusDeps {
   loadConfig: () => Promise<Partial<AppConfig>>;
   readProcesses: () => ProcessLike[];
   isCodexAvailable: () => Promise<boolean>;
+  readHealth: (processId: string) => Promise<RuntimeHealthView | undefined>;
 }
 
 export async function runStatusCli(): Promise<void> {
@@ -64,6 +77,24 @@ export async function collectStatus(
   const gatewayMode = getGatewayMode(config);
   const adapter = createAgentAdapter(agentEndpoint);
   const processes = (deps.readProcesses ?? readAndPrune)();
+  const healthReader = deps.readHealth
+    ?? ((processId: string) => readRuntimeHealth(deps.appDir ?? paths.appDir, processId));
+  const botHealth = (
+    await Promise.all(
+      processes.map(async (process) => {
+        const health = await healthReader(process.id);
+        if (!health) return undefined;
+        return {
+          processId: process.id,
+          state: health.state,
+          updatedAt: health.updatedAt,
+          fresh: health.fresh,
+          endpointAvailable: health.endpointAvailable,
+          ...(health.issue ? { issue: health.issue } : {}),
+        } satisfies BotRuntimeHealth;
+      }),
+    )
+  ).filter((health): health is BotRuntimeHealth => health !== undefined);
   const runningAgentEndpoints = [
     ...new Set(
       processes
@@ -85,6 +116,7 @@ export async function collectStatus(
         }
       : {}),
     runningBots: processes.length,
+    botHealth,
     agentEndpoint,
     gatewayMode,
     runtimeServices: {
@@ -99,6 +131,7 @@ export async function collectStatus(
 }
 
 export function formatStatus(status: CliStatus): string {
+  const connectedBots = status.botHealth.filter(isConnectedHealth).length;
   const lines = [
     '# Agent-Interaction-Bridge status',
     `home: ${status.appDir}`,
@@ -112,6 +145,7 @@ export function formatStatus(status: CliStatus): string {
 
   lines.push(
     `running bots: ${status.runningBots}`,
+    `connected bots: ${connectedBots}/${status.runningBots}`,
     `configured endpoint: ${status.agentEndpoint}`,
     `gateway mode: ${status.gatewayMode}`,
     `runtime services artifact namespace: ${status.runtimeServices.artifactNamespace}`,
@@ -123,6 +157,10 @@ export function formatStatus(status: CliStatus): string {
   );
 
   return lines.join('\n');
+}
+
+export function isConnectedHealth(health: BotRuntimeHealth): boolean {
+  return health.fresh && health.state === 'connected' && health.endpointAvailable;
 }
 
 export function maskAppId(appId: string): string {

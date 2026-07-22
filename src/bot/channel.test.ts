@@ -65,6 +65,10 @@ describe('channel gateway modes', () => {
     larkMock.state.handlers = undefined;
     larkMock.state.stream.mockReset();
     larkMock.state.send.mockReset();
+    larkMock.channel.connect.mockReset();
+    larkMock.channel.connect.mockResolvedValue(undefined);
+    larkMock.channel.disconnect.mockReset();
+    larkMock.channel.disconnect.mockResolvedValue(undefined);
     runtimeServicesMock.createRuntimeServicesPortContext.mockReset();
     runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
       {
@@ -115,6 +119,49 @@ describe('channel gateway modes', () => {
     expect(prompts[0]).not.toContain('<interaction_intent>');
 
     await bridge.disconnect();
+  });
+
+  test('reports connected and stopped runtime health around the carrier lifecycle', async () => {
+    const onHealth = vi.fn(async () => {});
+    const bridge = await startChannel({
+      cfg: config({ gatewayMode: 'relay', messageReply: 'card' }),
+      agent: agentCapturingPrompts([]),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}.json`)),
+      controls: controls(),
+      onHealth,
+    } as Parameters<typeof startChannel>[0] & { onHealth: typeof onHealth });
+
+    expect(onHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'connected' }),
+    );
+
+    await bridge.disconnect();
+
+    expect(onHealth).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'stopped' }),
+    );
+  });
+
+  test('closes a partially initialized carrier when the websocket handshake fails', async () => {
+    larkMock.channel.connect.mockRejectedValueOnce(new Error('handshake failed'));
+    const onHealth = vi.fn(async () => {});
+
+    await expect(startChannel({
+      cfg: config({ gatewayMode: 'relay', messageReply: 'card' }),
+      agent: agentCapturingPrompts([]),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}.json`)),
+      controls: controls(),
+      onHealth,
+    } as Parameters<typeof startChannel>[0] & { onHealth: typeof onHealth })).rejects.toThrow(
+      'handshake failed',
+    );
+
+    expect(larkMock.channel.disconnect).toHaveBeenCalledTimes(1);
+    expect(onHealth).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'degraded', issue: 'carrier_connect_failed' }),
+    );
   });
 
   test('default adapter mode visibly degrades to relay when Runtime Services has no adapter resources', async () => {

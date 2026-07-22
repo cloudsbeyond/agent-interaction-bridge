@@ -31,6 +31,11 @@ import {
   updateEntry,
   type ProcessEntry,
 } from '../../runtime/registry';
+import {
+  removeRuntimeHealthSync,
+  RuntimeHealthReporter,
+  type RuntimeHealthUpdate,
+} from '../../runtime/health';
 import { SessionStore } from '../../session/store';
 import { WorkspaceStore } from '../../workspace/store';
 
@@ -121,6 +126,20 @@ export async function runStart(opts: StartOptions): Promise<void> {
     agentEndpoint: endpoint,
   });
   log.info('registry', 'registered', { id: entry.id, pid: process.pid });
+  const runtimeHealth = new RuntimeHealthReporter({
+    appDir: paths.appDir,
+    processId: entry.id,
+    pid: process.pid,
+    endpoint,
+  });
+  const reportHealth = async (update: RuntimeHealthUpdate): Promise<void> => {
+    try {
+      await runtimeHealth.update(update);
+    } catch (err) {
+      log.fail('runtime-health', err, { step: 'persist' });
+    }
+  };
+  await reportHealth({ state: 'starting', endpointAvailable: true });
 
   // `bridge` is mutable so /account can swap it on restart. `controls` carries
   // restart() and a snapshot of the current cfg so command handlers can read
@@ -138,6 +157,9 @@ export async function runStart(opts: StartOptions): Promise<void> {
     } catch (err) {
       console.error('[disconnect-failed]', err);
     }
+    await runtimeHealth.remove().catch((err) =>
+      log.warn('runtime-health', 'cleanup-failed', { err: String(err) }),
+    );
     // unregister is best-effort sync — we're about to exit anyway.
     unregisterSync(entry.id);
     process.exit(0);
@@ -154,12 +176,6 @@ export async function runStart(opts: StartOptions): Promise<void> {
       if (restarting) return;
       restarting = true;
       try {
-        console.log('[restart] disconnecting old bridge...');
-        try {
-          await bridge.disconnect();
-        } catch (err) {
-          console.warn('[restart] disconnect failed:', err);
-        }
         const next = await loadConfig(configPath);
         if (!isComplete(next)) throw new Error('config incomplete after change');
         const nextEndpoint = opts.agentEndpoint ?? getAgentEndpointKind(next);
@@ -168,6 +184,63 @@ export async function runStart(opts: StartOptions): Promise<void> {
         });
         if (!(await nextAgent.isAvailable())) {
           throw new Error(`Codex endpoint unavailable after config reload: ${nextEndpoint}`);
+        }
+        const previous = {
+          cfg: controls.cfg,
+          endpoint,
+          agent,
+        };
+        await reportHealth({
+          state: 'starting',
+          issue: 'runtime_restarting',
+          endpoint: nextEndpoint,
+          endpointAvailable: true,
+        });
+        console.log('[restart] disconnecting old bridge...');
+        try {
+          await bridge.disconnect();
+          console.log(
+            `[restart] reconnecting with appId=${next.accounts.app.id} tenant=${next.accounts.app.tenant}...`,
+          );
+          const nextBridge = await startChannel({
+            cfg: next,
+            agent: nextAgent,
+            sessions,
+            workspaces,
+            controls,
+            onHealth: reportHealth,
+          });
+          bridge = nextBridge;
+        } catch (replacementError) {
+          log.fail('restart', replacementError, { step: 'replacement' });
+          await reportHealth({
+            state: 'starting',
+            issue: 'runtime_rollback',
+            endpoint: previous.endpoint,
+            endpointAvailable: true,
+          });
+          try {
+            bridge = await startChannel({
+              cfg: previous.cfg,
+              agent: previous.agent,
+              sessions,
+              workspaces,
+              controls,
+              onHealth: reportHealth,
+            });
+            controls.cfg = previous.cfg;
+            log.warn('restart', 'rollback-restored', { endpoint: previous.endpoint });
+          } catch (rollbackError) {
+            log.fail('restart', rollbackError, { step: 'rollback' });
+            await reportHealth({
+              state: 'degraded',
+              issue: 'runtime_recovery_failed',
+              endpoint: previous.endpoint,
+              endpointAvailable: false,
+            });
+            process.exit(1);
+          }
+          throw replacementError;
         }
         endpoint = nextEndpoint;
         agent = nextAgent;
@@ -184,10 +257,6 @@ export async function runStart(opts: StartOptions): Promise<void> {
         }).catch((err) =>
           log.warn('registry', 'update-failed', { err: String(err) }),
         );
-        console.log(
-          `[restart] reconnecting with appId=${next.accounts.app.id} tenant=${next.accounts.app.tenant}...`,
-        );
-        bridge = await startChannel({ cfg: next, agent, sessions, workspaces, controls });
         const restartedBotName = bridge.channel.botIdentity?.name;
         if (restartedBotName) {
           await updateEntry(entry.id, { botName: restartedBotName }).catch((err) =>
@@ -201,7 +270,14 @@ export async function runStart(opts: StartOptions): Promise<void> {
     },
   };
 
-  bridge = await startChannel({ cfg, agent, sessions, workspaces, controls });
+  bridge = await startChannel({
+    cfg,
+    agent,
+    sessions,
+    workspaces,
+    controls,
+    onHealth: reportHealth,
+  });
 
   // Backfill the bot's display name into the registry once WS handshake is
   // done — future starts conflicting on this app can show it in the prompt
@@ -219,6 +295,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
   // stop() (e.g. uncaughtException with process.exit(1)).
   process.on('exit', () => {
     unregisterSync(entry.id);
+    removeRuntimeHealthSync(paths.appDir, entry.id);
     cleanupTmpFiles();
   });
 

@@ -34,13 +34,14 @@ contracts:
         - Endpoint sessions and app-server pools are endpoint-profile state and must not become bridge memory unless policy maps them into typed ActionLog or AgentSignal objects.
         - Execution endpoint adapters must use endpoint-profile state only; they must not reuse bridge resources or sessions.
         - app-server compatibility changes must keep exec fallback available.
+        - In-process endpoint replacement must preflight the replacement before disconnecting the active carrier, restore the previous carrier when cutover fails, and terminate for service-manager recovery when both replacement and rollback fail.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts
+          command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/cli/commands/start.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts
+      generation_command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/cli/commands/start.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -52,8 +53,9 @@ contracts:
         - src/agent/factory.ts
         - src/agent/codex
         - src/agent/profile-policy.ts
+        - src/cli/commands/start.ts
       commands:
-        - pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts
+        - pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/cli/commands/start.test.ts
         - pnpm typecheck
     l4:
       owner: agent
@@ -65,13 +67,15 @@ contracts:
         - src/agent/codex/app-server-adapter.ts
         - src/agent/codex/app-server-protocol.ts
         - src/agent/profile-policy.ts
+        - src/cli/commands/start.ts
       ai_contract_index: agent-devops/ai-contract-index.md
       harness:
         - src/agent/codex/adapter.test.ts
         - src/agent/codex/app-server-adapter.test.ts
         - src/agent/codex/app-server-protocol.test.ts
         - src/agent/codex/stream-json.test.ts
+        - src/cli/commands/start.test.ts
       replay_evidence:
-        - Contract-maintained endpoint code; replay is codex adapter and app-server protocol harness.
+        - Contract-maintained endpoint code; replay is codex adapter, app-server protocol, and transactional restart harness.
       hand_edit_guard: Update endpoint contract or profile policy harness before changing Codex authority boundaries.
     stop_condition: Return to L0-L2 when endpoint protocol behavior changes the generic agent boundary or authority model.

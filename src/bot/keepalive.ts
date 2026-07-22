@@ -1,5 +1,6 @@
 import type { LarkChannel } from '@larksuiteoapi/node-sdk';
 import { log } from '../core/logger';
+import type { RuntimeHealthUpdate } from '../runtime/health';
 
 /**
  * App-level keepalive loop. Defense-in-depth against silent SDK / network
@@ -39,6 +40,8 @@ export interface KeepaliveDeps {
   domain: string;
   /** Force-reconnect callback. Bridge uses `controls.restart`. */
   forceReconnect: () => Promise<void>;
+  /** Persist a bounded runtime-health observation for operator diagnostics. */
+  onHealth?: (update: RuntimeHealthUpdate) => void | Promise<void>;
 }
 
 export interface KeepaliveHandle {
@@ -46,12 +49,23 @@ export interface KeepaliveHandle {
 }
 
 export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
-  const { channel, domain, forceReconnect } = deps;
+  const { channel, domain, forceReconnect, onHealth } = deps;
 
   let lastTick = 0;
   let consecutiveDown = 0;
   let networkDownTicks = 0;
   let stopped = false;
+
+  const observe = (update: RuntimeHealthUpdate): void => {
+    if (!onHealth) return;
+    try {
+      void Promise.resolve(onHealth(update)).catch((err) =>
+        log.fail('keepalive', err, { step: 'health-observation' }),
+      );
+    } catch (err) {
+      log.fail('keepalive', err, { step: 'health-observation' });
+    }
+  };
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
@@ -65,6 +79,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     // (2) Sleep detection — machine likely just woke from sleep.
     if (sinceLast > SLEEP_DETECT_MS) {
       log.info('keepalive', 'wake-up', { sleptMs: sinceLast });
+      observe({ state: 'starting', issue: 'wake_up_recheck' });
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
@@ -75,6 +90,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     const status = channel.getConnectionStatus();
     if (!status) {
       // Channel not initialized yet (pre-connect). Skip.
+      observe({ state: 'starting', issue: 'channel_uninitialized' });
       return;
     }
     if (status.state === 'connected') {
@@ -83,6 +99,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       }
       consecutiveDown = 0;
       networkDownTicks = 0;
+      observe({ state: 'connected' });
       return;
     }
 
@@ -95,6 +112,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       if (networkDownTicks === 1 || networkDownTicks % NETWORK_DOWN_LOG_EVERY === 0) {
         log.warn('network', 'unreachable', { domain, networkDownTicks });
       }
+      observe({ state: 'degraded', issue: 'network_unreachable' });
       // Reset WS-side counter — we're blocked by network, not WS.
       consecutiveDown = 0;
       return;
@@ -106,6 +124,11 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
 
     // Network reachable but WS not connected → WS is stuck.
     consecutiveDown++;
+    observe({
+      state: 'reconnecting',
+      issue: 'ws_reconnecting',
+      reconnectAttempts: status.reconnectAttempts,
+    });
     log.warn('keepalive', 'ws-stuck', {
       state: status.state,
       reconnectAttempts: status.reconnectAttempts,
