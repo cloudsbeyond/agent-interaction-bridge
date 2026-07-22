@@ -52,6 +52,7 @@ import type { WorkspaceStore } from '../workspace/store';
 import { createBoundChat, defaultChatName } from '../bot/group';
 import { sendReplyMarkdown, withReplyMentions } from '../bot/reply-mentions';
 import { getApprovalModels } from '../task/run-policy';
+import type { TaskApprovalStore } from '../task/approval-store';
 import type { TaskStatusStore } from '../task/status-store';
 import type { SignalTimelineStore } from '../signal/timeline';
 import { isAdminCommandName, type HandledChatCommand } from './registry';
@@ -93,6 +94,7 @@ export interface CommandContext {
   workspaces: WorkspaceStore;
   agent: AgentAdapter;
   activeRuns: ActiveRuns;
+  approvals: TaskApprovalStore;
   taskStatus: TaskStatusStore;
   signalTimeline: SignalTimelineStore;
   controls: Controls;
@@ -218,7 +220,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     return handleNewChat(rawName, ctx);
   }
 
-  const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
+  const wasRunning = resetScopeRuntimeState(ctx);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
 }
@@ -283,7 +285,7 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, `路径不存在：\`${absolute}\``);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  resetScopeRuntimeState(ctx);
   ctx.workspaces.setCwd(ctx.scope, absolute);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换 cwd 到 \`${absolute}\`\n（session 已重置）`);
@@ -340,7 +342,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, `未找到工作空间：\`${name}\``);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  resetScopeRuntimeState(ctx);
   ctx.workspaces.setCwd(ctx.scope, cwd);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${cwd})\n（session 已重置）`);
@@ -388,12 +390,25 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
   const mode = ctx.sessions.getGatewayMode(ctx.scope) ?? getGatewayMode(ctx.controls.cfg);
-  ctx.activeRuns.interrupt(ctx.scope);
+  resetScopeRuntimeState(ctx);
   ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.agent.id, agentSessionContextVersion(mode));
   await reply(
     ctx,
     `✓ 已恢复会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
   );
+}
+
+function resetScopeRuntimeState(ctx: CommandContext): boolean {
+  const interrupted = ctx.activeRuns.interrupt(ctx.scope);
+  const cancelledApprovals = ctx.approvals.cancelScope(ctx.scope);
+  ctx.taskStatus.clear(ctx.scope);
+  ctx.signalTimeline.clear(ctx.scope);
+  log.info('scope', 'runtime-state-reset', {
+    scope: ctx.scope,
+    interrupted,
+    cancelledApprovals,
+  });
+  return interrupted;
 }
 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {

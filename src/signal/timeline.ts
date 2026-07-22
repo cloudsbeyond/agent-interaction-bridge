@@ -59,6 +59,10 @@ export class SignalTimelineStore {
     };
     return true;
   }
+
+  clear(scope: string): boolean {
+    return this.byScope.delete(scope);
+  }
 }
 
 function cloneRecord(record: SignalRecord): SignalRecord {

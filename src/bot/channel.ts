@@ -319,6 +319,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessions,
           workspaces,
           activeRuns,
+          approvals,
           taskStatus,
           signalTimeline,
           pending,
@@ -339,6 +340,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessions,
           workspaces,
           activeRuns,
+          approvals,
           agent,
           controls,
           pending,
@@ -456,6 +458,7 @@ interface IntakeDeps {
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
+  approvals: TaskApprovalStore;
   taskStatus: TaskStatusStore;
   signalTimeline: SignalTimelineStore;
   pending: PendingQueue;
@@ -471,6 +474,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     sessions,
     workspaces,
     activeRuns,
+    approvals,
     taskStatus,
     signalTimeline,
     pending,
@@ -549,6 +553,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     workspaces,
     agent,
     activeRuns,
+    approvals,
     taskStatus,
     signalTimeline,
     controls,
@@ -721,13 +726,16 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   const decision = parseApprovalDecision(lastMsg.content);
   if (decision) {
+    const pendingApproval = approvals.get(decision.approvalId);
+    const approvalInScope = pendingApproval?.scope === scope ? pendingApproval : undefined;
     const approval = decision.action === 'execute'
-      ? approvals.consume(decision.approvalId)
-      : approvals.get(decision.approvalId);
+      ? approvalInScope && approvals.consume(decision.approvalId)
+      : approvalInScope;
     if (!approval) {
       turnTrace.record('approval_missing', {
         approvalId: decision.approvalId,
         action: decision.action,
+        scopeMatch: Boolean(approvalInScope),
       });
       await sendReplyMarkdown(channel, chatId, '这张审批卡片已过期或已处理。', sendOpts);
       await flushTurnTrace();
@@ -1034,6 +1042,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     return { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
   };
   const finishTask = (lifecycle: Exclude<TaskLifecycle, 'pending_approval' | 'running'>): void => {
+    if (!taskStatus.snapshot(scope)) return;
     taskStatus.finish(scope, lifecycle);
     signalTimeline.append(scope, {
       kind: 'final_result',

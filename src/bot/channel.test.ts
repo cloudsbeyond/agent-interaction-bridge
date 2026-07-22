@@ -1,7 +1,7 @@
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { NormalizedMessage } from '@larksuiteoapi/node-sdk';
+import type { CardActionEvent, NormalizedMessage } from '@larksuiteoapi/node-sdk';
 import type { AgentAdapter, AgentRunOptions } from '../agent/types';
 import type { AppConfig } from '../config/schema';
 import { SessionStore } from '../session/store';
@@ -12,6 +12,7 @@ const larkMock = vi.hoisted(() => {
   const state: {
     handlers?: {
       message?: (msg: NormalizedMessage) => Promise<void>;
+      cardAction?: (evt: CardActionEvent) => Promise<void>;
     };
     stream: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
@@ -141,6 +142,139 @@ describe('channel gateway modes', () => {
     expect(onHealth).toHaveBeenLastCalledWith(
       expect.objectContaining({ state: 'stopped' }),
     );
+  });
+
+  test('executes bridge task approval callbacks without forwarding raw card clicks to the agent', async () => {
+    const prompts: string[] = [];
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('git status summary', prompts, runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-approval.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-approval.json`)),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message('/approve run git status and summarize it'));
+    await vi.advanceTimersByTimeAsync(700);
+
+    await vi.waitFor(() => {
+      expect(larkMock.state.send).toHaveBeenCalledWith(
+        'oc_123',
+        { card: expect.any(Object) },
+        expect.objectContaining({ replyTo: expect.any(String) }),
+      );
+    });
+    expect(runs).toHaveLength(0);
+    const approvalCard = larkMock.state.send.mock.calls.find(
+      (call) => Boolean((call[1] as { card?: object })?.card),
+    )?.[1] as { card: object };
+    const execute = collectButtonValues(approvalCard.card).find(
+      (value) => value.approval_action === 'execute',
+    );
+    expect(execute).toEqual(expect.objectContaining({
+      __agent_cb: true,
+      approval_id: expect.any(String),
+    }));
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_approval_card',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    expect(prompts[0]).toContain('run git status and summarize it');
+    expect(prompts[0]).not.toContain('[card-click]');
+    expect(prompts[0]).not.toContain('approval_action');
+
+    await bridge.disconnect();
+  });
+
+  test('invalidates prior task state and approvals when cwd resets the scope context', async () => {
+    const task = 'summarize the legacy workspace state';
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('should not run', [], runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-cd-reset.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-cd-reset.json`)),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message(`/approve ${task}`));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(larkMock.state.send).toHaveBeenCalled());
+    const approvalCard = larkMock.state.send.mock.calls.find(
+      (call) => Boolean((call[1] as { card?: object })?.card),
+    )?.[1] as { card: object };
+    const execute = collectButtonValues(approvalCard.card).find(
+      (value) => value.approval_action === 'execute',
+    );
+    expect(execute).toBeDefined();
+
+    await larkMock.state.handlers?.message?.(message(`/cd ${tmpdir()}`));
+    await larkMock.state.handlers?.message?.(message('/status'));
+    const statusPayload = larkMock.state.send.mock.calls.at(-1)?.[1];
+    expect(JSON.stringify(statusPayload)).not.toContain(task);
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_stale_approval_card',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(runs).toHaveLength(0);
+    expect(JSON.stringify(larkMock.state.send.mock.calls.at(-1)?.[1])).toContain('已过期');
+
+    await bridge.disconnect();
+  });
+
+  test('rejects approval decisions outside the scope that created the approval', async () => {
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('approved', [], runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-scope.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-scope.json`)),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message('/approve scoped task'));
+    await vi.advanceTimersByTimeAsync(700);
+    const approvalCard = larkMock.state.send.mock.calls.find(
+      (call) => Boolean((call[1] as { card?: object })?.card),
+    )?.[1] as { card: object };
+    const execute = collectButtonValues(approvalCard.card).find(
+      (value) => value.approval_action === 'execute',
+    );
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_other',
+      messageId: 'om_copied_approval',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(runs).toHaveLength(0);
+
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_original_approval',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+
+    await bridge.disconnect();
   });
 
   test('closes a partially initialized carrier when the websocket handshake fails', async () => {
@@ -684,4 +818,13 @@ type FeishuPost = {
 
 function firstPostParagraph(post: FeishuPost | undefined): Array<Record<string, unknown>> {
   return post?.zh_cn?.content?.[0] ?? [];
+}
+
+function collectButtonValues(node: unknown): Record<string, unknown>[] {
+  if (!node || typeof node !== 'object') return [];
+  const value = node as Record<string, unknown>;
+  const own = value.tag === 'button' && value.value && typeof value.value === 'object'
+    ? [value.value as Record<string, unknown>]
+    : [];
+  return own.concat(Object.values(value).flatMap(collectButtonValues));
 }

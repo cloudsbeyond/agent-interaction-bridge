@@ -9,6 +9,8 @@ import { isChatAllowed, isUserAllowed } from '../config/schema';
 import { log } from '../core/logger';
 import type { SessionStore } from '../session/store';
 import type { SignalTimelineStore } from '../signal/timeline';
+import { validateApprovalDecisionPayload } from '../task/approval-contract';
+import type { TaskApprovalStore } from '../task/approval-store';
 import type { TaskStatusStore } from '../task/status-store';
 import type { WorkspaceStore } from '../workspace/store';
 
@@ -30,6 +32,7 @@ export interface CardDispatchDeps {
   controls: Controls;
   pending: PendingQueue;
   chatModeCache: ChatModeCache;
+  approvals: TaskApprovalStore;
   taskStatus: TaskStatusStore;
   signalTimeline: SignalTimelineStore;
 }
@@ -76,6 +79,14 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     return;
   }
 
+  // Bridge-owned approval callbacks use the same marker as agent-rendered
+  // callbacks, but must retain it so the task approval parser can validate
+  // and consume the frozen approval instead of starting a raw card-click task.
+  if (validateApprovalDecisionPayload(payload)) {
+    forwardApprovalDecision(deps, payload, scope, threadId);
+    return;
+  }
+
   // Agent-driven callback: the button was rendered by Codex itself via
   // lark-cli, with `__agent_cb` set on the value. Forward the click back
   // into the scope's pending queue so Codex resumes its session and sees
@@ -97,6 +108,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     sessions: deps.sessions,
     workspaces: deps.workspaces,
     activeRuns: deps.activeRuns,
+    approvals: deps.approvals,
     taskStatus: deps.taskStatus,
     signalTimeline: deps.signalTimeline,
     agent: deps.agent,
@@ -115,6 +127,19 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   } catch (err) {
     log.fail('cardAction', err, { cmd });
   }
+}
+
+function forwardApprovalDecision(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  scope: string,
+  threadId: string | undefined,
+): void {
+  log.info('cardAction', 'approval-decision', {
+    scope,
+    payload: JSON.stringify(payload).slice(0, 200),
+  });
+  deps.pending.push(scope, makeSyntheticCardClick(deps.evt, payload, threadId));
 }
 
 async function resolveScope(
@@ -177,14 +202,22 @@ function forwardToAgent(
     scope,
     payload: JSON.stringify(merged).slice(0, 200),
   });
-  const synthetic: NormalizedMessage = {
-    messageId: deps.evt.messageId,
-    chatId: deps.evt.chatId,
+  deps.pending.push(scope, makeSyntheticCardClick(deps.evt, merged, threadId));
+}
+
+function makeSyntheticCardClick(
+  evt: CardActionEvent,
+  payload: Record<string, unknown>,
+  threadId: string | undefined,
+): NormalizedMessage {
+  return {
+    messageId: evt.messageId,
+    chatId: evt.chatId,
     chatType: 'p2p',
     threadId,
-    senderId: deps.evt.operator.openId,
-    senderName: deps.evt.operator.name,
-    content: `[card-click] ${JSON.stringify(merged)}`,
+    senderId: evt.operator.openId,
+    senderName: evt.operator.name,
+    content: `[card-click] ${JSON.stringify(payload)}`,
     rawContentType: 'card_action',
     resources: [],
     mentions: [],
@@ -192,7 +225,6 @@ function forwardToAgent(
     mentionedBot: false,
     createTime: Date.now(),
   };
-  deps.pending.push(scope, synthetic);
 }
 
 /** Turn a button payload like {cmd:'ws.use', name:'proj-a'} into the arg
