@@ -76,6 +76,17 @@ describe('doctor cli helpers', () => {
     expect(output).toContain('runtime health: missing');
   });
 
+  test('reports runtime health as not running when no bot process exists', () => {
+    const output = formatDoctorReport({
+      status: completeStatus({ runningBots: 0, botHealth: [] }),
+      resources: requiredResources(),
+    });
+
+    expect(output).toContain('connected bots: 0/0');
+    expect(output).toContain('runtime health: not running');
+    expect(output).not.toContain('runtime health: ok');
+  });
+
   test('marks a reconnecting bot as attention even when config and dependencies are ready', () => {
     const output = formatDoctorReport({
       status: {

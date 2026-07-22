@@ -81,7 +81,9 @@ export function formatDoctorReport(report: DoctorReport): string {
     `connected bots: ${connectedBots}/${report.status.runningBots}`,
   ];
 
-  if (report.status.runningBots > botHealth.length) {
+  if (report.status.runningBots === 0) {
+    lines.push('runtime health: not running');
+  } else if (report.status.runningBots > botHealth.length) {
     lines.push('runtime health: missing');
   } else if (!runtimeHealthReady) {
     lines.push('runtime health: attention');

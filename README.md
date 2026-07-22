@@ -254,8 +254,9 @@ agent-interaction-bridge start
 ```
 
 `npm i -g agent-interaction-bridge` only works after an npm release. If Codex is
-installed through the Mac app but not on `PATH`, the runtime also tries
-`/Applications/Codex.app/Contents/Resources/codex`.
+installed through a Mac desktop app but not on `PATH`, the runtime also tries
+the embedded binaries under `/Applications/Codex.app` and
+`/Applications/ChatGPT.app`.
 
 Optional Codex app-server endpoint:
 
@@ -336,6 +337,9 @@ summarizes config completeness, Codex execution endpoint availability, Runtime
 Services helper model/storage resources, per-process carrier health, and future
 compute stubs without printing secrets. A live PID without a fresh connected
 health snapshot is reported as `attention`, not as a healthy running bot.
+When no bot process exists, runtime health is reported as `not running` rather
+than `ok`; readiness still describes whether local dependencies are ready to
+start.
 
 ## Model Providers
 
