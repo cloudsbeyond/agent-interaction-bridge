@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { classifyInteractionIntent } from '../interaction/intent';
-import { replyModeForInteractionIntent } from './reply-mode-policy';
+import { planInteractionPresentation } from '../interaction/presentation-plan';
+import { replyModeForPresentationPlan } from './reply-mode-policy';
 
-describe('replyModeForInteractionIntent', () => {
+describe('replyModeForPresentationPlan', () => {
   test('routes explicit presentation feedback for cards to card reply mode', () => {
     const userText = '信息密度很高，且是有层次的，应该用飞书卡片嘛';
     const intent = classifyInteractionIntent({
@@ -11,7 +12,8 @@ describe('replyModeForInteractionIntent', () => {
       channel: 'feishu',
     });
 
-    expect(replyModeForInteractionIntent({ intent, userText })).toBe('card');
+    const presentationPlan = planInteractionPresentation({ text: userText, intent });
+    expect(replyModeForPresentationPlan(presentationPlan)).toBe('card');
   });
 
   test('does not force cards for generic readability criticism', () => {
@@ -22,7 +24,8 @@ describe('replyModeForInteractionIntent', () => {
       channel: 'feishu',
     });
 
-    expect(replyModeForInteractionIntent({ intent, userText })).toBeUndefined();
+    const presentationPlan = planInteractionPresentation({ text: userText, intent });
+    expect(replyModeForPresentationPlan(presentationPlan)).toBeUndefined();
   });
 
   test('routes explicit visualization feedback to card reply mode', () => {
@@ -33,7 +36,8 @@ describe('replyModeForInteractionIntent', () => {
       channel: 'feishu',
     });
 
-    expect(replyModeForInteractionIntent({ intent, userText })).toBe('card');
+    const presentationPlan = planInteractionPresentation({ text: userText, intent });
+    expect(replyModeForPresentationPlan(presentationPlan)).toBe('card');
   });
 
   test('does not force cards for ordinary task requests', () => {
@@ -44,7 +48,8 @@ describe('replyModeForInteractionIntent', () => {
       channel: 'feishu',
     });
 
-    expect(replyModeForInteractionIntent({ intent, userText })).toBeUndefined();
+    const presentationPlan = planInteractionPresentation({ text: userText, intent });
+    expect(replyModeForPresentationPlan(presentationPlan)).toBeUndefined();
   });
 
   test('routes Dynamic UI task requests to card reply mode', () => {
@@ -55,6 +60,7 @@ describe('replyModeForInteractionIntent', () => {
       channel: 'feishu',
     });
 
-    expect(replyModeForInteractionIntent({ intent, userText })).toBe('card');
+    const presentationPlan = planInteractionPresentation({ text: userText, intent });
+    expect(replyModeForPresentationPlan(presentationPlan)).toBe('card');
   });
 });

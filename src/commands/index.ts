@@ -1,7 +1,12 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { LarkChannel, NormalizedMessage } from '@larksuiteoapi/node-sdk';
-import type { AgentAdapter } from '../agent/types';
+import type {
+  AgentAdapter,
+  AgentSessionCatalog,
+  AgentSessionQuery,
+  AgentSessionSummary,
+} from '../agent/types';
 import { defaultAgentTaskCwd } from '../agent/default-cwd';
 import { prepareAgentProfileRunPlan } from '../agent/profile-policy';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -36,6 +41,7 @@ import { setSecret } from '../config/keystore';
 import { buildEncryptedAccountConfig, saveConfig } from '../config/store';
 import { log, readRecentLogs, sanitizeLogsForDoctor } from '../core/logger';
 import { renderCard } from '../card/run-renderer';
+import { appendSessionIdentityCard } from '../card/session-identity';
 import {
   finalizeIfRunning,
   initialState,
@@ -43,7 +49,7 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatRelTime, listRecentSessions } from '../session/history';
+import { formatRelTime } from '../session/history';
 import { agentSessionContextVersion } from '../session/context-version';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
@@ -59,6 +65,11 @@ import { isAdminCommandName, type HandledChatCommand } from './registry';
 import { createRuntimeServicesPortContext } from '../runtime-services/selector';
 import { resolveEffectiveGatewayMode } from '../gateway/mode-policy';
 import { paths } from '../config/paths';
+import {
+  appendSessionIdentityMarkdown,
+  appendSessionIdentityPlainText,
+  type InteractionSessionIdentity,
+} from '../presentation/session-identity';
 
 export interface Controls {
   /** Restart the bridge in-process: disconnect WS, kill Codex runs, reload
@@ -188,21 +199,55 @@ export async function runCommandHandler(
  * losing the message is better than dying.
  */
 async function reply(ctx: CommandContext, markdown: string): Promise<void> {
+  const body = appendSessionIdentityMarkdown(markdown, sessionIdentity(ctx));
   try {
     await sendReplyMarkdown(
       ctx.channel,
       ctx.msg.chatId,
-      markdown,
+      body,
       withReplyMentions({
         sendOpts: { replyTo: ctx.msg.messageId },
         batch: [ctx.msg],
-        body: markdown,
+        body,
         replyMentionTargets: getReplyMentionTargets(ctx.controls.cfg),
       }),
     );
   } catch (err) {
     log.fail('command', err, { step: 'reply' });
   }
+}
+
+function sessionIdentity(ctx: CommandContext): InteractionSessionIdentity {
+  const task = ctx.taskStatus?.snapshot(ctx.scope);
+  return {
+    bridge: ctx.scope,
+    domain: ctx.sessions.getRaw(ctx.scope)?.sessionId,
+    ...(task?.startedAt !== undefined ? { elapsedMs: task.elapsedMs } : {}),
+  };
+}
+
+function cardWithSessionIdentity(ctx: CommandContext, card: object): object {
+  return appendSessionIdentityCard(card, sessionIdentity(ctx));
+}
+
+async function sendCardReply(ctx: CommandContext, card: object): Promise<void> {
+  await ctx.channel.send(
+    ctx.msg.chatId,
+    { card: cardWithSessionIdentity(ctx, card) },
+    { replyTo: ctx.msg.messageId },
+  );
+}
+
+async function sendManagedContextCard(ctx: CommandContext, card: object): Promise<void> {
+  await sendManagedCard(ctx.channel, ctx.msg.chatId, cardWithSessionIdentity(ctx, card));
+}
+
+async function updateManagedContextCard(
+  ctx: CommandContext,
+  messageId: string,
+  card: object,
+): Promise<void> {
+  await updateManagedCard(ctx.channel, messageId, cardWithSessionIdentity(ctx, card));
 }
 
 function expandTilde(p: string): string {
@@ -253,7 +298,9 @@ async function handleNewChat(rawName: string, ctx: CommandContext): Promise<void
     ? `🎉 群已建好，cwd 继承自原群：\`${sourceCwd}\`\n\n@我 + 任意消息开始对话。`
     : '🎉 群已建好。\n\n@我 + 任意消息开始对话。';
   try {
-    await ctx.channel.send(created.chatId, { markdown: welcome });
+    await ctx.channel.send(created.chatId, {
+      markdown: appendSessionIdentityMarkdown(welcome, { bridge: created.chatId }),
+    });
   } catch (err) {
     console.warn('[new-chat] welcome message failed:', err);
   }
@@ -315,7 +362,7 @@ async function handleWsList(ctx: CommandContext): Promise<void> {
   const named = ctx.workspaces.listNamed();
   const currentCwd = ctx.workspaces.cwdFor(ctx.scope);
   const card = workspacesCard(currentCwd, named);
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function handleWsSave(name: string, ctx: CommandContext): Promise<void> {
@@ -373,29 +420,127 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   const n = Number.parseInt(sub, 10);
   const limit = Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
 
-  const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
-  const sessions = await listRecentSessions(cwd, limit);
+  const resumeContext = await resolveResumeContext(ctx, limit);
+  if (!resumeContext) return;
+  const { catalog, query, runPlan } = resumeContext;
+  let sessions: AgentSessionSummary[];
+  try {
+    sessions = await catalog.list(query);
+  } catch (error) {
+    log.warn('session', 'catalog-list-failed', {
+      scope: ctx.scope,
+      profile: runPlan.profile.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await reply(ctx, '无法读取 Codex Thread 列表。请确认 Codex 已登录且 app-server 可用。');
+    return;
+  }
   const currentSession = ctx.sessions.getRaw(ctx.scope);
-  const entries = sessions.map((s) => ({
-    sessionId: s.sessionId,
-    preview: s.preview,
-    relTime: formatRelTime(s.mtime),
-    lineCount: s.lineCount,
-    current: s.sessionId === currentSession?.sessionId,
-  }));
-  const card = resumeCard(cwd, entries);
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  const entries = sessions
+    .filter((session) => !session.ephemeral)
+    .map((session) => ({
+      sessionId: session.sessionId,
+      preview: session.preview,
+      relTime: formatRelTime(session.updatedAtMs),
+      status: session.status,
+      source: session.source,
+      bindable: session.status !== 'active' && session.status !== 'error',
+      current: session.sessionId === currentSession?.sessionId,
+    }));
+  const card = resumeCard(query.cwd, entries);
+  await sendCardReply(ctx, card);
 }
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
-  const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
+  if (ctx.activeRuns.has(ctx.scope)) {
+    await reply(ctx, '当前 scope 仍有任务在运行。请先 `/stop`，再绑定其他 Thread。');
+    return;
+  }
+  const resumeContext = await resolveResumeContext(ctx, 1);
+  if (!resumeContext) return;
+  const { catalog, query, runPlan } = resumeContext;
+  let selected: AgentSessionSummary | undefined;
+  try {
+    selected = await catalog.read(sessionId, query);
+  } catch (error) {
+    log.warn('session', 'catalog-read-failed', {
+      scope: ctx.scope,
+      profile: runPlan.profile.id,
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await reply(ctx, '无法校验这个 Codex Thread；当前 scope 未发生变化。');
+    return;
+  }
+  if (!selected) {
+    await reply(ctx, '没有找到这个 Codex Thread。当前 scope 未发生变化。');
+    return;
+  }
+  const rejection = resumeRejection(selected, query.cwd);
+  if (rejection) {
+    await reply(ctx, `${rejection} 当前 scope 未发生变化。`);
+    return;
+  }
   const mode = ctx.sessions.getGatewayMode(ctx.scope) ?? getGatewayMode(ctx.controls.cfg);
   resetScopeRuntimeState(ctx);
-  ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.agent.id, agentSessionContextVersion(mode));
+  ctx.sessions.set(
+    ctx.scope,
+    selected.sessionId,
+    query.cwd,
+    runPlan.agentRuntimeId,
+    agentSessionContextVersion(mode),
+  );
   await reply(
     ctx,
-    `✓ 已恢复会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
+    `✓ 已绑定 Codex Thread \`${selected.sessionId.slice(0, 8)}…\`。下一条消息会继续这个 Thread。`,
   );
+}
+
+async function resolveResumeContext(
+  ctx: CommandContext,
+  limit: number,
+): Promise<{
+  catalog: AgentSessionCatalog;
+  query: AgentSessionQuery;
+  runPlan: Awaited<ReturnType<typeof prepareAgentProfileRunPlan>>;
+} | undefined> {
+  const catalog = ctx.agent.sessions;
+  if (!catalog) {
+    await reply(ctx, '当前执行 Endpoint 不支持查询已有 Thread。');
+    return undefined;
+  }
+  const requestedCwd = ctx.workspaces.cwdFor(ctx.scope)
+    ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
+  const runPlan = await prepareAgentProfileRunPlan({
+    profileId: getAgentEndpointProfileId(ctx.controls.cfg),
+    runtimeHome: paths.appDir,
+    scope: ctx.scope,
+    agentRuntimeId: ctx.agent.id,
+    run: { prompt: '', cwd: requestedCwd },
+  });
+  const cwd = runPlan.run.cwd ?? requestedCwd;
+  return {
+    catalog,
+    runPlan,
+    query: {
+      cwd,
+      codexHome: runPlan.run.codexHome,
+      endpointProfileId: runPlan.profile.id,
+      limit,
+    },
+  };
+}
+
+function resumeRejection(
+  session: AgentSessionSummary | undefined,
+  cwd: string,
+): string | undefined {
+  if (!session) return '没有找到这个 Codex Thread。';
+  if (session.cwd !== cwd) return '这个 Codex Thread 不属于当前 cwd。';
+  if (session.ephemeral) return '临时 Codex Thread 不能绑定。';
+  if (session.status === 'active') return '这个 Codex Thread 当前仍在运行，P0 不允许并发绑定。';
+  if (session.status === 'error') return '这个 Codex Thread 当前状态异常，不能绑定。';
+  return undefined;
 }
 
 function resetScopeRuntimeState(ctx: CommandContext): boolean {
@@ -432,7 +577,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
       })),
     },
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function handleStop(_args: string, ctx: CommandContext): Promise<void> {
@@ -510,9 +655,16 @@ async function handleGatewayMode(args: string, ctx: CommandContext): Promise<voi
   if (trimmed === 'default' || trimmed === 'reset') {
     const cleared = ctx.sessions.clearGatewayModeOverride(ctx.scope);
     const clearedSession = ctx.sessions.clearResumableSession(ctx.scope);
+    const cancelledApprovals = ctx.approvals.cancelScope(ctx.scope);
     log.info('command', 'gateway-mode-clear', { scope: ctx.scope, cleared });
     if (clearedSession) {
       log.info('command', 'gateway-mode-session-cleared', { scope: ctx.scope, mode: globalMode });
+    }
+    if (cancelledApprovals > 0) {
+      log.info('command', 'gateway-mode-approvals-cancelled', {
+        scope: ctx.scope,
+        count: cancelledApprovals,
+      });
     }
     await reply(
       ctx,
@@ -546,9 +698,16 @@ async function handleGatewayMode(args: string, ctx: CommandContext): Promise<voi
 
   ctx.sessions.setGatewayMode(ctx.scope, requestedMode);
   const clearedSession = ctx.sessions.clearResumableSession(ctx.scope);
+  const cancelledApprovals = ctx.approvals.cancelScope(ctx.scope);
   log.info('command', 'gateway-mode-set', { scope: ctx.scope, mode: requestedMode });
   if (clearedSession) {
     log.info('command', 'gateway-mode-session-cleared', { scope: ctx.scope, mode: requestedMode });
+  }
+  if (cancelledApprovals > 0) {
+    log.info('command', 'gateway-mode-approvals-cancelled', {
+      scope: ctx.scope,
+      count: cancelledApprovals,
+    });
   }
   await reply(ctx, `当前 session gatewayMode 已设为 ${requestedMode}。`);
 }
@@ -710,9 +869,13 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
 
   const rawLogs = await readRecentLogs({ maxBytes: 60_000 });
   if (!rawLogs.trim()) {
+    const body = appendSessionIdentityPlainText(
+      '没有找到日志文件 — bridge 可能刚启动或日志目录不可写。',
+      sessionIdentity(ctx),
+    );
     await ctx.channel.send(
       ctx.msg.chatId,
-      { text: '没有找到日志文件 — bridge 可能刚启动或日志目录不可写。' },
+      { text: body },
       { replyTo: ctx.msg.messageId },
     );
     return;
@@ -751,23 +914,42 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
   const run = ctx.agent.run(runPlan.run);
   const handle = ctx.activeRuns.register(ctx.scope, run);
+  const doctorStartedAt = Date.now();
+  const doctorSessionIdentity = (
+    domain: string | undefined,
+  ): InteractionSessionIdentity => ({
+    bridge: ctx.scope,
+    domain,
+    elapsedMs: Date.now() - doctorStartedAt,
+  });
 
   try {
     if (isP2p) {
       // Streaming card path — operator is the only viewer in p2p.
+      let doctorSessionId: string | undefined;
       await ctx.channel.stream(
         ctx.msg.chatId,
         {
           card: {
-            initial: renderCard(initialState),
+            initial: appendSessionIdentityCard(
+              renderCard(initialState),
+              doctorSessionIdentity(doctorSessionId),
+            ),
             producer: async (ctrl) => {
               let state: RunState = initialState;
-              const flush = (): Promise<void> => ctrl.update(renderCard(state));
+              const flush = (): Promise<void> => ctrl.update(appendSessionIdentityCard(
+                renderCard(state),
+                doctorSessionIdentity(doctorSessionId),
+              ));
               for await (const evt of handle.run.events) {
                 if (handle.interrupted) break;
                 // /doctor runs are session-less: skip 'system' so we don't
                 // persist a doctor's sessionId over the user's real session.
-                if (evt.type === 'system') continue;
+                if (evt.type === 'system') {
+                  doctorSessionId = evt.sessionId;
+                  await flush();
+                  continue;
+                }
                 if (evt.type === 'usage') {
                   if (evt.costUsd !== undefined) {
                     log.info('agent', 'usage', { step: 'doctor', costUsd: Number(evt.costUsd.toFixed(4)) });
@@ -793,9 +975,13 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
       // operator. No live streaming — the group should see nothing past the
       // ack reply above.
       let state: RunState = initialState;
+      let doctorSessionId: string | undefined;
       for await (const evt of handle.run.events) {
         if (handle.interrupted) break;
-        if (evt.type === 'system') continue;
+        if (evt.type === 'system') {
+          doctorSessionId = evt.sessionId;
+          continue;
+        }
         if (evt.type === 'usage') {
           if (evt.costUsd !== undefined) {
             log.info('agent', 'usage', { step: 'doctor', costUsd: Number(evt.costUsd.toFixed(4)) });
@@ -815,7 +1001,10 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
         data: {
           receive_id: ctx.msg.senderId,
           msg_type: 'interactive',
-          content: JSON.stringify(renderCard(state)),
+          content: JSON.stringify(appendSessionIdentityCard(
+            renderCard(state),
+            doctorSessionIdentity(doctorSessionId),
+          )),
         },
       });
     }
@@ -828,7 +1017,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
 
 async function handleHelp(_args: string, ctx: CommandContext): Promise<void> {
   const card = helpCard();
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 // ─── /account ─────────────────────────────────────────────────────────────
@@ -858,7 +1047,7 @@ async function showCurrent(ctx: CommandContext): Promise<void> {
     botName: ctx.channel.botIdentity?.name,
     tenant: ctx.controls.cfg.accounts.app.tenant,
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+  await sendCardReply(ctx, card);
 }
 
 async function showForm(ctx: CommandContext): Promise<void> {
@@ -866,7 +1055,7 @@ async function showForm(ctx: CommandContext): Promise<void> {
   if (ctx.fromCardAction) {
     await recallMessage(ctx, ctx.msg.messageId);
   }
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+  await sendManagedContextCard(ctx, card);
 }
 
 async function cancelAccount(ctx: CommandContext): Promise<void> {
@@ -888,7 +1077,6 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
   const tenant = (fv.tenant === 'lark' ? 'lark' : 'feishu') as TenantBrand;
 
   const formMsgId = ctx.msg.messageId;
-  const channel = ctx.channel;
   const configPath = ctx.controls.configPath;
   const restart = ctx.controls.restart;
 
@@ -898,7 +1086,6 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
   // client snaps the card back to its cached form state (overwriting any
   // update we made). Returning immediately lets the lock release; the
   // delayed updateManagedCard then sticks.
-  const chatId = ctx.msg.chatId;
   void (async () => {
     const submittedAt = Date.now();
     const waitForSettle = async (): Promise<void> => {
@@ -912,7 +1099,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
     // (success card has no form), so this is fine.
     const finishSuccess = async (card: object): Promise<void> => {
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, card).catch((err) =>
+      await updateManagedContextCard(ctx, formMsgId, card).catch((err) =>
         console.warn('[account] form update failed:', err),
       );
       forgetManagedCard(formMsgId);
@@ -926,7 +1113,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
     // the same card_id no longer fires cardActions.
     const finishFailure = async (errorMessage: string): Promise<void> => {
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, accountFailureCard(errorMessage))
+      await updateManagedContextCard(ctx, formMsgId, accountFailureCard(errorMessage))
         .catch((err) => console.warn('[account] mark old form failed:', err));
       forgetManagedCard(formMsgId);
       // Don't prefill the secret on retry — pre-filled secrets can get
@@ -936,7 +1123,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
         initialTenant: tenant,
         prefillAppId: appId,
       });
-      await sendManagedCard(channel, chatId, retry).catch((err) =>
+      await sendManagedContextCard(ctx, retry).catch((err) =>
         console.warn('[account] post retry form failed:', err),
       );
     };
@@ -1028,7 +1215,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     admins: (access.admins ?? []).join(', '),
   });
   if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
-  await sendManagedCard(ctx.channel, ctx.msg.chatId, card);
+  await sendManagedContextCard(ctx, card);
 }
 
 async function cancelConfig(ctx: CommandContext): Promise<void> {
@@ -1036,7 +1223,7 @@ async function cancelConfig(ctx: CommandContext): Promise<void> {
     const formMsgId = ctx.msg.messageId;
     void (async () => {
       await new Promise((r) => setTimeout(r, FORM_SETTLE_MS));
-      await updateManagedCard(ctx.channel, formMsgId, configCancelledCard()).catch((err) =>
+      await updateManagedContextCard(ctx, formMsgId, configCancelledCard()).catch((err) =>
         log.warn('command', 'config-cancel-update-failed', { err: String(err) }),
       );
       forgetManagedCard(formMsgId);
@@ -1150,7 +1337,6 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
   }
 
   const formMsgId = ctx.msg.messageId;
-  const channel = ctx.channel;
   const configPath = ctx.controls.configPath;
 
   // Detach: same reason as account submit — Lark's client locks the form
@@ -1187,7 +1373,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
     } catch (err) {
       log.fail('command', err, { step: 'config.save' });
       await waitForSettle();
-      await updateManagedCard(channel, formMsgId, configCancelledCard()).catch(() => {});
+      await updateManagedContextCard(ctx, formMsgId, configCancelledCard()).catch(() => {});
       forgetManagedCard(formMsgId);
       return;
     }
@@ -1206,8 +1392,8 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       adminsCount: admins.length,
     });
     await waitForSettle();
-    await updateManagedCard(
-      channel,
+    await updateManagedContextCard(
+      ctx,
       formMsgId,
       configSavedCard({
         messageReply,

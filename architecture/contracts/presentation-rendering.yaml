@@ -10,7 +10,7 @@ contracts:
     l0:
       owner: human
       status: frozen
-      problem: Shape execution-agent and bridge information for human surfaces without degrading into dense blobs, unsupported payloads, or carrier-specific ad hoc formatting.
+      problem: Shape domain-agent and bridge information for human surfaces without degrading into dense blobs, unsupported payloads, or carrier-specific ad hoc formatting.
     l1:
       owner: human
       status: frozen
@@ -22,33 +22,39 @@ contracts:
       owner: human
       status: frozen
       path: architecture/contracts/presentation-rendering.yaml
-      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      freeze_signal: Emoji-labeled Bridge, Domain, and task elapsed footer accepted by human owner on 2026-07-23.
       invariants:
-        - "`relay` mode must not invoke presentation planning, Dynamic UI reply-mode hints, expression transforms, image generation, or Feishu/Lark delivery support; it may still inject a plain-text response template and render the execution-agent stream in the configured message reply mode."
+        - "`relay` mode must not invoke presentation planning, Dynamic UI reply-mode hints, expression transforms, image generation, or Feishu/Lark delivery support; it may still inject a plain-text response template and render the domain-agent stream in the configured message reply mode."
         - "`adapter` mode should inject a known channel presentation template when the channel is known; otherwise it may use Runtime Services model support for expression shaping when resources are available."
         - Known Feishu/Lark presentation templates should be grounded in current carrier facts such as `lark-cli` message shortcuts, Feishu post Markdown behavior, Card JSON 2.0, media payload rules, and card markdown line-break semantics.
         - Presentation planning starts from ontology objects, not carrier payloads or ad hoc text wrapping.
+        - InteractionIntent contains conversational-act interpretation only. ExpressionProfile and PresentationPlan own representation, layout, density, sections, and presentation guidance.
         - Dynamic UI belongs to ExpressionProfile and PresentationPlan; InteractionIntent may record presentation feedback but must not own visual routing.
+        - InteractionTurnPlan preserves ordered typed sections until one deterministic renderer lowers the Domain Agent prompt.
+        - "Prompt section content contains only the tag body. The central renderer emits canonical XML-like tags, escapes structured attributes but not body text, normalizes CRLF or CR to LF, omits empty sections, and places exactly one blank line between sections with no outer blank lines."
+        - "Prompt normalization removes only outer whitespace-only lines. User Markdown, indentation, internal blank lines, and fenced code remain unchanged; legacy sections already wrapped in their matching tag are unwrapped once before canonical rendering."
         - SurfaceContext controls density, medium, and carrier fit without changing task meaning.
         - Plain feedback should stay readable text unless PresentationPlan, approval, or choice semantics require richer structure.
         - Cards are one possible carrier lowering for state, approval, configuration, choices, reports, comparison, progress, and visual summaries.
         - Feishu/Lark card markdown lowering must preserve visible line boundaries with carrier-specific hard breaks outside fenced code blocks.
+        - "Every normal Feishu/Lark text or card reply must end with one session identity footer using `📥` for Bridge scope, `🤖` for the Domain Agent thread, and `⏳` for elapsed task time. Bridge displays at most its final 8 characters, Domain displays at most its first 8 characters, shorter values stay unchanged, and no ellipses are added. When task timing is available, append `| ⏳ - <duration>` using compact minute/second notation; replies without task timing omit that segment. Markdown/card lowering uses a `>` quote block, and plain-text lowering omits quote syntax."
+        - Session identity footers expose existing references for traceability only and must not select a scope, session, profile, endpoint, or approval state.
         - Explicit feedback asking for a card, structure, or visualization may influence ExpressionProfile and PresentationPlan; generic readability criticism must not force a card by itself.
         - Recognized visual scenarios must use explicit open layouts such as flow, dashboard, timeline, metric grid, or comparison blocks when the surface supports them.
         - Helper models may recommend expression or layout only through typed proposals with confidence, evidence, rejected alternatives, and policy notes.
         - Unsupported structured JSON must be rendered as safe fallback text, not posted raw.
-        - Chat-facing prose requirements should be injected before execution-agent work when possible; card renderers must only apply carrier-generic hygiene such as raw text fences, heading glue, leaked interaction JSON checks, and dense paragraph splitting.
+        - Chat-facing prose requirements should be injected before domain-agent work when possible; card renderers must only apply carrier-generic hygiene such as raw text fences, heading glue, leaked interaction JSON checks, and dense paragraph splitting.
         - Feishu/Lark delivery may automatically execute stateless helper-model calls for expression/delivery artifact representations; durable artifacts must enter ArtifactStore before reuse.
         - Generated image artifacts should be sent as Feishu/Lark image messages after the primary rendered message; secondary media-send failures must not fail the primary signal delivery.
         - Expression/delivery helper support must not choose tools, approve risk, change endpoint profiles, mutate cwd/session state, or inject helper-model config into execution endpoint runs.
         - Presentation decisions that use model proposals, memory, or artifact generation should be recorded in ActionLog.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
+          command: pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/session-identity.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/session-identity.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
+      generation_command: pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/session-identity.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/session-identity.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -60,6 +66,7 @@ contracts:
         - src/presentation
         - src/interaction/intent.ts
         - src/interaction/model-judge.ts
+        - src/interaction/presentation-plan.ts
         - src/bot/prompt-plan.ts
         - src/bot/reply-mode-policy.ts
         - src/signal/reply-presentation.ts
@@ -70,7 +77,7 @@ contracts:
         - src/bot/feishu-signal-delivery.ts
         - src/signal/feishu-renderer.ts
       commands:
-        - pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
+        - pnpm test -- src/bot/channel.test.ts src/bot/feishu-reply-debug.test.ts src/interaction/prompt.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/bot/prompt-plan.test.ts src/bot/reply-mode-policy.test.ts src/signal/reply-presentation.test.ts src/signal/delivery-support-executor.test.ts src/signal/feishu-delivery-support.test.ts src/bot/feishu-signal-delivery.test.ts src/card/presentation-card.test.ts src/card/chat-presentation-contract.test.ts src/card/card-text.test.ts src/card/feishu-markdown.test.ts src/card/run-renderer.test.ts src/card/text-renderer.test.ts src/card/interaction-card.test.ts src/presentation/document.test.ts src/presentation/capabilities.test.ts src/presentation/templates.test.ts src/presentation/renderers/feishu-card.test.ts src/presentation/renderers/html.test.ts src/presentation/renderers/markdown.test.ts src/signal/feishu-renderer.test.ts
     l4:
       owner: agent
       artifacts:
@@ -84,10 +91,12 @@ contracts:
         - src/card/presentation-card.ts
         - src/card/task-approval-card.ts
         - src/card/run-renderer.ts
+        - src/card/session-identity.ts
         - src/card/run-state.ts
         - src/card/text-renderer.ts
         - src/card/tool-render.ts
         - src/presentation/document.ts
+        - src/presentation/session-identity.ts
         - src/presentation/capabilities.ts
         - src/presentation/templates.ts
         - src/presentation/renderers/feishu-card.ts
@@ -97,6 +106,7 @@ contracts:
         - src/interaction/feishu-surface-templates.ts
         - src/interaction/intent.ts
         - src/interaction/model-judge.ts
+        - src/interaction/presentation-plan.ts
         - src/bot/prompt-plan.ts
         - src/bot/reply-mode-policy.ts
         - src/signal/reply-presentation.ts
@@ -117,6 +127,8 @@ contracts:
         - src/card/task-approval-card.test.ts
         - src/card/presentation-card.test.ts
         - src/card/run-renderer.test.ts
+        - src/card/session-identity.test.ts
+        - src/presentation/session-identity.test.ts
         - src/presentation/document.test.ts
         - src/presentation/capabilities.test.ts
         - src/presentation/templates.test.ts
@@ -128,6 +140,7 @@ contracts:
         - src/interaction/prompt.test.ts
         - src/interaction/intent.test.ts
         - src/interaction/model-judge.test.ts
+        - src/interaction/presentation-plan.test.ts
         - src/bot/prompt-plan.test.ts
         - src/bot/reply-mode-policy.test.ts
         - src/signal/reply-presentation.test.ts

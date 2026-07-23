@@ -5,21 +5,17 @@ import type { Readable, Writable } from 'node:stream';
 import { log } from '../../core/logger';
 import { AGENT_RUNTIME_CODEX_CLI } from '../../topology/entities';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../types';
+import { CodexAppServerSessionCatalog } from './app-server-sessions';
+import { buildCodexEnv, codexBinaryCandidates, findCodexBinary } from './process';
 import { translateEvent } from './stream-json';
+
+export { buildCodexEnv, codexBinaryCandidates } from './process';
 
 export interface CodexAdapterOptions {
   binary?: string;
 }
 
 type CodexChild = ChildProcessByStdio<Writable, Readable, Readable>;
-const MACOS_CODEX_APP_BINARY = '/Applications/Codex.app/Contents/Resources/codex';
-const MACOS_CHATGPT_APP_BINARY = '/Applications/ChatGPT.app/Contents/Resources/codex';
-
-export function codexBinaryCandidates(binary?: string): string[] {
-  return [binary ?? 'codex', MACOS_CODEX_APP_BINARY, MACOS_CHATGPT_APP_BINARY].filter(
-    (value, index, all) => all.indexOf(value) === index,
-  );
-}
 
 export function formatCodexExitError(exitCode: number, stderr: string, binary = 'codex'): string {
   const text = stderr || '';
@@ -117,36 +113,22 @@ export function buildCodexArgs(opts: AgentRunOptions): string[] {
   return args;
 }
 
-export function buildCodexEnv(
-  opts: AgentRunOptions,
-  baseEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  return {
-    ...baseEnv,
-    AGENT_INTERACTION_BRIDGE: '1',
-    ...(opts.codexHome ? { CODEX_HOME: opts.codexHome } : {}),
-  };
-}
-
 export class CodexAdapter implements AgentAdapter {
   readonly id = AGENT_RUNTIME_CODEX_CLI.id;
   readonly displayName = AGENT_RUNTIME_CODEX_CLI.displayName;
+  readonly sessions: CodexAppServerSessionCatalog;
 
   private readonly binary: string;
   private resolvedBinary?: string;
 
   constructor(opts: CodexAdapterOptions = {}) {
     this.binary = opts.binary ?? 'codex';
+    this.sessions = new CodexAppServerSessionCatalog({ binary: this.binary });
   }
 
   async isAvailable(): Promise<boolean> {
-    for (const candidate of codexBinaryCandidates(this.binary)) {
-      if (await canRunCodex(candidate)) {
-        this.resolvedBinary = candidate;
-        return true;
-      }
-    }
-    return false;
+    this.resolvedBinary = await findCodexBinary(this.binary);
+    return this.resolvedBinary !== undefined;
   }
 
   private async getBinary(): Promise<string> {
@@ -253,13 +235,6 @@ export class CodexAdapter implements AgentAdapter {
   }
 }
 
-function canRunCodex(binary: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn(binary, ['--version'], { stdio: 'ignore' });
-    child.on('error', () => resolve(false));
-    child.on('exit', (code) => resolve(code === 0));
-  });
-}
 
 async function* createEventStream(
   child: CodexChild,

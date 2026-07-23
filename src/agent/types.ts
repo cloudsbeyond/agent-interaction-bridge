@@ -1,3 +1,5 @@
+import type { AgentSignal } from '../signal/router';
+
 export type AgentEvent =
   | { type: 'system'; sessionId?: string; cwd?: string; model?: string }
   | { type: 'text'; delta: string }
@@ -5,6 +7,7 @@ export type AgentEvent =
   | { type: 'thinking'; delta: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; id: string; output: string; isError: boolean }
+  | { type: 'signal'; signal: AgentSignal }
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }
   | { type: 'done'; sessionId?: string }
   | { type: 'error'; message: string };
@@ -47,9 +50,34 @@ export interface AgentRun {
   waitForExit(timeoutMs: number): Promise<boolean>;
 }
 
+export type AgentSessionStatus = 'active' | 'idle' | 'not_loaded' | 'error';
+
+export interface AgentSessionSummary {
+  sessionId: string;
+  cwd: string;
+  preview: string;
+  updatedAtMs: number;
+  status: AgentSessionStatus;
+  ephemeral: boolean;
+  source?: string;
+}
+
+export interface AgentSessionQuery {
+  cwd: string;
+  codexHome?: string;
+  endpointProfileId: string;
+  limit?: number;
+}
+
+export interface AgentSessionCatalog {
+  list(query: AgentSessionQuery): Promise<AgentSessionSummary[]>;
+  read(sessionId: string, query: AgentSessionQuery): Promise<AgentSessionSummary | undefined>;
+}
+
 export interface AgentAdapter {
   readonly id: string;
   readonly displayName: string;
+  readonly sessions?: AgentSessionCatalog;
   isAvailable(): Promise<boolean>;
   run(opts: AgentRunOptions): AgentRun;
 }

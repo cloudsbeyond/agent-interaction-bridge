@@ -19,6 +19,10 @@ export class ActiveRuns {
     if (existing?.run === run) this.handles.delete(chatId);
   }
 
+  has(chatId: string): boolean {
+    return this.handles.has(chatId);
+  }
+
   /**
    * Interrupt the current run for this chat, if any. Returns true if an
    * interrupt was issued. Fires stop() fire-and-forget — the old run's

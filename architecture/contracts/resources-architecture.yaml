@@ -21,7 +21,7 @@ contracts:
       owner: human
       status: frozen
       path: architecture/contracts/resources-architecture.yaml
-      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      freeze_signal: Bridge-agent and domain-agent role alignment accepted by human owner on 2026-07-22.
       invariants:
         - CapabilityCatalog describes cognitive abilities; Runtime Services describes whether operator-provided implementations exist.
         - Missing resources are visible as Runtime Services `missing_resource` results and must not be masked by fallback prose.
@@ -30,9 +30,9 @@ contracts:
         - Language, embedding, and vision modules are configured together for future multimodal workflows, but each module remains independently addressable.
         - Model resources are external Runtime Services cognitive helpers for perception, intent support, expression planning, embedding, indexing, artifact generation, and quality evaluation.
         - Helper models must return typed proposals or typed artifacts; policy and deterministic planners decide whether they are used.
-        - Model resources must not be exposed as execution endpoint capabilities, override endpoint model/config/env, choose tools, execute work, or change authority.
-        - Local vector indexes are owned by Runtime Services, remain domain-agent retrieval support state, and must not be projected as execution endpoint memory.
-        - State inheritance is forbidden by default across bridge resources, carrier state, and execution endpoint sessions.
+        - Model resources must not be exposed as domain-agent endpoint capabilities, override endpoint model/config/env, choose tools, execute work, or change authority.
+        - Local vector indexes are owned by Runtime Services, remain domain-agent retrieval support state, and must not be projected as domain-agent endpoint memory.
+        - State inheritance is forbidden by default across bridge resources, carrier state, and domain-agent endpoint sessions.
         - Runtime Services own base resources as a support plane; bridge consumes typed service interfaces and must not share raw resources, stores, provider handles, or sessions.
         - Bridge may pass caller-owned storage names to Runtime Services (`namespace` for artifacts/records and `tableName` for vectors), but the physical artifact store, record store, vector index, manifests, provider config, and keys remain Runtime Services assets.
         - Bridge business code must depend only on `RuntimeServicesPort`, not on `/rpc`, MCP tools, provider clients, storage handles, or transport branches.
@@ -110,4 +110,4 @@ contracts:
       replay_evidence:
         - Contract-maintained RuntimeServicesPort, JSON-RPC adapter, future MCP naming/transport scaffolding, secret/admin port guard, and architecture harness; Runtime Services implementation and capability registry have their own repository gates.
       hand_edit_guard: Update resource or architecture contract before changing Runtime Services availability or typed-result semantics.
-    stop_condition: Return to L0-L2 before treating a Runtime Services capability as bridge-owned or as an execution-agent capability.
+    stop_condition: Return to L0-L2 before treating a Runtime Services capability as bridge-owned or as a domain-agent capability.

@@ -164,7 +164,9 @@ export interface ResumeEntry {
   sessionId: string;
   preview: string;
   relTime: string;
-  lineCount: number;
+  status: 'active' | 'idle' | 'not_loaded' | 'error';
+  source?: string;
+  bindable: boolean;
   current?: boolean;
 }
 
@@ -174,31 +176,44 @@ export function resumeCard(cwd: string, entries: ResumeEntry[]): object {
 
   if (entries.length === 0) {
     elements.push(HR);
-    elements.push(divMd('此 cwd 下没有历史会话。'));
-    return shell('🔁 恢复历史会话', elements);
+    elements.push(divMd('此 cwd 下没有可发现的 Codex Thread。'));
+    return shell('🔁 绑定 Codex Thread', elements);
   }
 
   elements.push(HR);
   entries.forEach((e, i) => {
     const marker = e.current ? '  ← 当前' : '';
+    const status = formatResumeStatus(e.status);
+    const source = e.source ? ` · ${escapeLarkMarkdown(e.source)}` : '';
     elements.push(
       divMd(
-        `**${i + 1}.** ${escapeLarkMarkdown(e.preview)}${marker}\n\`${e.sessionId.slice(0, 8)}…\` · ${e.relTime} · ${e.lineCount} 条`,
+        `**${i + 1}.** ${escapeLarkMarkdown(e.preview)}${marker}\n\`${e.sessionId.slice(0, 8)}…\` · ${e.relTime}${source} · ${status}`,
       ),
     );
-    elements.push(
-      actions([
-        {
-          text: e.current ? '已是当前会话' : '▸ 恢复此会话',
-          value: { cmd: 'resume.use', arg: e.sessionId },
-          style: e.current ? 'default' : 'primary',
-        },
-      ]),
-    );
+    if (e.current || !e.bindable) {
+      elements.push(divMd(e.current ? '_已是当前 Thread_' : '_当前不可绑定_'));
+    } else {
+      elements.push(
+        actions([
+          {
+            text: '▸ 绑定此 Thread',
+            value: { cmd: 'resume.use', arg: e.sessionId },
+            style: 'primary',
+          },
+        ]),
+      );
+    }
     if (i < entries.length - 1) elements.push(HR);
   });
 
-  return shell('🔁 恢复历史会话', elements);
+  return shell('🔁 绑定 Codex Thread', elements);
+}
+
+function formatResumeStatus(status: ResumeEntry['status']): string {
+  if (status === 'active') return '运行中，不可绑定';
+  if (status === 'idle') return '空闲';
+  if (status === 'error') return '状态异常';
+  return '已保存';
 }
 
 export function helpCard(): object {

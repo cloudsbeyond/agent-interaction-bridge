@@ -3,6 +3,7 @@ import {
   buildTurnStartParams,
   translateAppServerNotification,
 } from './app-server-protocol';
+import { encodeAgentSignalBlock } from '../../signal/protocol';
 
 describe('codex app-server protocol helpers', () => {
   test('builds a text turn/start request for an existing thread', () => {
@@ -79,5 +80,26 @@ describe('codex app-server protocol helpers', () => {
         },
       }),
     ]).toEqual([{ type: 'text', delta: 'po' }, { type: 'text_replace', text: 'pong' }]);
+  });
+
+  test('translates completed proactive messages to AgentSignal events', () => {
+    const signal = {
+      id: 'choice-1',
+      kind: 'choice' as const,
+      title: 'Select path',
+      summary: 'Choose one option',
+      actions: ['A', 'B'],
+    };
+    expect([
+      ...translateAppServerNotification({
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'agentMessage',
+            text: encodeAgentSignalBlock(signal),
+          },
+        },
+      }),
+    ]).toEqual([{ type: 'signal', signal }]);
   });
 });

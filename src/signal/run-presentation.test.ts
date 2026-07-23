@@ -88,4 +88,25 @@ describe('presentRunState', () => {
       { kind: 'markdown', body: '# Agent-Interaction-Bridge\nSignal -> Carrier\n## 当前' },
     ]);
   });
+
+  test('removes a domain-emitted session footer before generic card lowering', () => {
+    const presentation = presentRunState({
+      terminal: 'done',
+      footer: null,
+      reasoning: { content: '', active: false },
+      blocks: [
+        {
+          kind: 'text',
+          streaming: false,
+          content: [
+            '完成。',
+            '',
+            '> Session：Bridge - old-bridge | Domain - old-domain',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(presentation.sections).toEqual([{ kind: 'markdown', body: '完成。' }]);
+  });
 });

@@ -1,7 +1,7 @@
 # Agentic Bridge Ontology
 
 Status: target architecture
-Scope: global architecture for a bounded interaction agent
+Scope: global architecture for a bounded bridge agent
 Date: 2026-05-29
 
 This document defines the target product architecture for an AI-native bridge.
@@ -10,26 +10,28 @@ use this document as the product ontology target before moving code.
 
 ## Core Thesis
 
-Agent-Interaction-Bridge should be treated as a bounded interaction agent, not
-as a traditional passive gateway with AI API calls.
+Agent-Interaction-Bridge should be treated as a bounded bridge agent, not as a
+traditional passive gateway with AI API calls and not as the domain agent that
+owns task reasoning.
 
-The bridge is the domain agent. It owns perception, context interpretation,
-memory retrieval, expression planning, multimodal transformation, delivery
-quality, and feedback learning. It does not own risky task execution.
+The bridge owns interaction mediation: perception, context interpretation,
+expression planning, multimodal transformation, delivery quality, correlation,
+and feedback evidence. Domain agents own task reasoning, tools, risk judgment,
+and their execution sessions.
 
-## Why A Bridge Agent Proxies Execution Agents
+## Why A Bridge Agent Mediates Domain Agents
 
-The bridge does not exist to add a transport wrapper around an execution agent.
+The bridge does not exist to add a transport wrapper around a domain agent.
 It exists because the human-interaction problem and the task-execution problem
 have different objectives, risks, state, and capabilities.
 
-Execution agents are optimized for reasoning over tasks, using tools, editing
+Domain agents are optimized for reasoning over tasks, using tools, editing
 files, running commands, and maintaining execution sessions. Human-facing
 surfaces need a different agentic layer: one that understands the speaker, the
 device, the channel, the available presentation forms, prior feedback,
 multimodal inputs, density budgets, and delivery quality.
 
-Directly exposing execution agents to human channels creates structural
+Directly exposing domain agents to human channels creates structural
 coupling:
 
 - channel payloads become mixed with execution prompts
@@ -40,30 +42,35 @@ coupling:
 - endpoint changes can break human-facing product behavior
 
 The bridge agent is therefore an anti-corruption layer, a capability governor,
-and a product interaction layer. It proxies execution agents by creating typed
-objects and bounded contracts between humans and executors:
+and a product interaction layer. It mediates domain agents by creating typed
+objects and bounded contracts between humans and task executors:
 
 ```text
 HumanTurn
-  -> Bridge Domain Agent
+  -> Bridge Agent
      -> AgentTask
-        -> Execution Agent
+        -> Domain Agent
      <- AgentSignal
   <- PresentationPlan / DeliveryPlan
 ```
 
+The direction may also start from the Domain Agent. Its outbound intent still
+enters Bridge policy, presentation, carrier delivery, and ActionLog. Bridge
+preserves `correlation_id -> message_id -> scope -> session_id` so a later
+HumanTurn can resume the originating Domain Agent session.
+
 This proxying is not pass-through forwarding. The bridge may perceive,
 summarize, retrieve memory, plan expression, generate artifacts, evaluate
 quality, and choose a delivery plan. It must not execute tools, approve risk,
-mutate endpoint profiles, or replace execution-agent judgment.
+mutate endpoint profiles, or replace domain-agent judgment.
 
 ## Agent Roles
 
 | Role | Responsibility | Authority |
 | --- | --- | --- |
 | Human Operator | Identity, credentials, publishing, exposure, product direction | Final authority |
-| Bridge Domain Agent | Understands turns, surfaces, expression needs, memories, and delivery quality | Product Runtime interaction authority |
-| Execution Agent | Reasons about tasks, uses tools, edits files, runs commands | Explicit endpoint profile authority |
+| Bridge Agent | Mediates turns, surfaces, expression needs, correlation, delivery, and audit evidence | Product Runtime interaction authority |
+| Domain Agent | Reasons about tasks, uses tools, edits files, runs commands, and continues task sessions | Explicit endpoint profile authority |
 | Capability Provider | Supplies language, vision, embedding, image, voice, storage, or compute ability | No independent authority |
 
 ## State Boundaries
@@ -94,11 +101,12 @@ resources, stores, provider handles, or sessions with each other.
 | Bridge orchestration runtime | `bounded-state` | Bridge runtime | In-flight turns, pending queues, process registry, scoped sessions |
 | SurfaceContext derivation | `stateless` | None | Pure interpretation of event metadata and channel capability |
 | Perception service | `stateless` by default | Capability boundary | May write artifacts only through ArtifactStore |
-| InteractionIntent classifier | `stateless` | Bridge domain agent | May call model helper; must return typed result |
-| ExpressionProfile planner | `stateless` with optional reads | Bridge domain agent | May read memory; writes decisions only through ActionLog |
-| Presentation planner | `stateless` with optional reads | Bridge domain agent | Lowers intent, expression, surface, policy, and resource state |
+| InteractionIntent classifier | `stateless` | Bridge agent | May call model helper; must return typed result |
+| ExpressionProfile planner | `stateless` with optional reads | Bridge agent | May read memory; writes decisions only through ActionLog |
+| Presentation planner | `stateless` with optional reads | Bridge agent | Lowers intent, expression, surface, policy, and resource state |
 | Carrier renderer | `stateless` | Carrier adapter | Pure lowering from DeliveryPlan to payload |
 | Carrier delivery adapter | `bounded-state` | Carrier adapter | Tracks send/update ids, retries, and delivery status |
+| Outbound interaction correlation | `bounded-state` | Bridge runtime | Maps correlation id, carrier message id, conversation scope, and originating domain-agent session id; ActionLog keeps durable audit evidence |
 | Policy/profile resolver | `stateless` over durable config | Policy layer | Reads endpoint profile and operator config |
 | ActionLog service | `durable-state` | Runtime Services | Append-only decision and delivery evidence |
 | ArtifactStore | `durable-state` | Runtime Services | Artifact files plus metadata manifest |
@@ -126,10 +134,10 @@ resources, stores, provider handles, or sessions with each other.
 | Vector fallback store | `durable-state` | Runtime Services retrieval state; not endpoint session memory |
 | Process registry | `bounded-state` with durable evidence | Runtime data | Operational status, not semantic memory |
 | Channel platform state | `external-provider-state` | Store only needed refs locally; do not assume channel keeps bridge semantics |
-| Execution agent session | `durable-state` or `bounded-state` | Endpoint profile state; not bridge helper-model memory |
+| Domain-agent session | `durable-state` or `bounded-state` | Endpoint profile state; not bridge helper-model memory |
 
 State inheritance is forbidden by default. A stateful bridge resource does not
-become execution-agent memory, and a stateful execution endpoint does not become
+become domain-agent memory, and a stateful domain-agent endpoint does not become
 bridge semantic memory unless policy maps it into a typed object. Runtime
 services may hold all stores in one operator home, but access is scoped by owner,
 key, and profile.
@@ -140,12 +148,12 @@ key, and profile.
 flowchart LR
   human["Human"]
   surface["Surface<br/>Feishu, Web, CLI, voice, watch"]
-  bridge["Bridge Domain Agent<br/>bounded interaction agent"]
-  endpoint["Execution Agent<br/>Codex exec, app-server, remote agent"]
+  bridge["Bridge Agent<br/>bounded interaction mediation"]
+  endpoint["Domain Agent<br/>Codex or remote agent via endpoint"]
 
   human --> surface --> bridge
   bridge -->|"AgentTask only"| endpoint
-  endpoint -->|"AgentSignal"| bridge
+  endpoint -->|"AgentSignal / outbound intent"| bridge
   bridge -->|"PresentationPlan + DeliveryPlan"| surface
 ```
 
@@ -294,7 +302,29 @@ Fields:
 - `fallback`
 - `qualityChecks`
 
-It must not own carrier send APIs or execution agent behavior.
+It must not own carrier send APIs or domain-agent behavior.
+
+### InteractionTurnPlan
+
+The channel-neutral ordered prompt plan for one human turn.
+
+Fields:
+
+- gateway mode
+- channel
+- typed ordered sections
+- InteractionIntent
+- optional ExpressionProfile
+- optional PresentationPlan
+
+The plan remains structured through policy and approval handling. A single
+deterministic renderer lowers it at the execution endpoint boundary. Carrier
+routing ids remain in Bridge state unless Domain Agent reasoning explicitly
+needs them.
+
+For Feishu/Lark, the final presentation projects existing Bridge scope and
+Domain session/thread references into a compact observability footer. This is a
+display rule over existing state, not a new ontology object or routing input.
 
 ### DeliveryPlan
 
@@ -311,7 +341,7 @@ Fields:
 
 ### AgentTask
 
-A task delegated to an execution agent.
+A task delegated to a domain agent through an execution endpoint.
 
 Fields:
 
@@ -327,16 +357,22 @@ itself.
 
 ### AgentSignal
 
-Stable information emitted by the execution agent or bridge processing.
+Stable information emitted by a domain agent or bridge processing.
 
 Examples:
 
 - progress
 - final answer
 - artifact ready
+- proactive outbound intent
 - risk approval required
 - failed
 - needs human input
+
+Endpoint-native signals and explicit interaction requests may become proactive,
+reply-correlated interaction. Signals derived by Bridge from a tool result are
+same-turn presentation enrichment only: they retain their AgentSignal semantic
+kind but do not create proactive correlation or resumable reply authority.
 
 ### ActionLog
 
@@ -351,7 +387,10 @@ Records:
 - planner decisions
 - policy gates
 - endpoint tasks
+- outbound correlation from domain-agent intent to carrier message, scope, and session
 - delivery result
+- reply correlation and one-time reply consumption
+- originating-session resume success or failure
 - user feedback
 
 ActionLog is the source for future learning and debugging.
@@ -365,15 +404,15 @@ ActionLog is the source for future learning and debugging.
 | Embedding model | memory retrieval, similar incident lookup, preference recall | endpoint memory injection without policy |
 | Image model | presentation artifacts | changing task result or claiming execution evidence |
 | Voice model | voice input/output transformation | identity, credential, or approval substitution |
-| Execution endpoint | task reasoning and tools under profile | carrier rendering, credential ownership |
+| Domain-agent endpoint | task reasoning and tools under profile | carrier rendering, credential ownership |
 
 ## Processing Loop
 
 ```mermaid
 sequenceDiagram
   participant H as Human
-  participant B as Bridge Domain Agent
-  participant E as Execution Agent
+  participant B as Bridge Agent
+  participant D as Domain Agent
   participant L as ActionLog
 
   H->>B: HumanTurn
@@ -382,13 +421,22 @@ sequenceDiagram
   B->>B: Intent or expression proposal if needed
   B->>B: Policy validation
   alt needs execution
-    B->>E: AgentTask
-    E-->>B: AgentSignal
+    B->>D: AgentTask
+    D-->>B: AgentSignal
   end
   B->>B: PresentationPlan
   B->>B: DeliveryPlan
   B-->>H: Delivered response
   B->>L: Decision and delivery record
+
+  opt domain-agent-initiated interaction
+    D-->>B: AgentSignal / outbound intent
+    B->>B: Policy + PresentationPlan + DeliveryPlan
+    B-->>H: Proactive delivery
+    B->>L: correlation_id + message_id + scope + session_id
+    H->>B: Reply HumanTurn
+    B->>D: Resume originating session
+  end
 ```
 
 ## Design Rules
@@ -398,9 +446,11 @@ sequenceDiagram
    transformation, retrieval, generation, or quality evaluation.
 3. Require typed proposals from helper models.
 4. Validate every proposal against policy and surface capability.
-5. Keep execution authority behind explicit endpoint profiles.
+5. Keep domain-agent execution authority behind explicit endpoint profiles.
 6. Record bridge decisions as ActionLog objects.
-7. Test the ontology transition, not only the rendered payload.
+7. Route both human-initiated and domain-agent-initiated interaction through the
+   bridge, with correlation and audit evidence.
+8. Test the ontology transition, not only the rendered payload.
 
 ## Palantir Concepts Adapted
 

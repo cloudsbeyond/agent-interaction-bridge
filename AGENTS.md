@@ -1,9 +1,9 @@
 # Agent Operating Contract
 
 ```text
-mission: local-first bounded interaction agent
-core: human surface -> bridge domain agent -> execution agent -> surface-aware delivery
-current_path: Feishu/Lark -> bridge domain agent -> local Codex execution endpoint
+mission: local-first bounded interaction bridge agent
+core: human surface <-> bridge agent <-> domain agent -> surface-aware delivery
+current_path: Feishu/Lark <-> bridge agent <-> local Codex domain agent
 future_paths: Mac, Web, CLI, voice, A2A, remote execution endpoints
 authority_boundary: humans own identity, credentials, publishing, and exposure
 ```
@@ -65,8 +65,8 @@ README.md / PRD.md
 
 ## Product Invariants
 
-- Agent-Interaction-Bridge is a bounded domain agent, not a passive gateway with
-  AI API calls.
+- Agent-Interaction-Bridge is a bounded bridge agent, not a passive gateway with
+  AI API calls and not the domain agent that owns task reasoning.
 - Gateway behavior has two modes only: `relay` and `adapter`.
 - `relay` preserves channel duties such as credentials, access control,
   allowed chats, mention policy, queueing, session/cwd, endpoint profile,
@@ -84,6 +84,25 @@ README.md / PRD.md
   `ExpressionProfile`, `TypedProposal`, `PresentationPlan`, `DeliveryPlan`,
   `AgentTask`, `AgentSignal`, and `ActionLog`.
 - `AgentSignal` is semantic truth, not provider payload.
+- The formal interaction path in both directions is human surface <-> bridge
+  agent <-> domain agent. Domain-agent-initiated messages must return through
+  bridge policy, presentation, carrier delivery, and ActionLog rather than
+  bypassing the bridge.
+- The bridge must preserve a correlation chain from outbound intent through
+  carrier message and conversation scope to the originating domain-agent
+  session, so a human reply resumes the same task context.
+- Every normal Feishu/Lark reply must expose the current Bridge conversation
+  scope and Domain Agent session/thread reference as presentation-only
+  observability. Each displayed identifier is at most 8 characters: longer
+  Bridge scope identifiers display their final 8 characters, while longer
+  Domain session/thread identifiers display their first 8 characters, without
+  an ellipsis. When the reply has task context, append the current or completed
+  task runtime using compact minute/second notation. The footer is one line:
+  `Session：📥 - <id> | 🤖 - <id> | ⏳ - <duration>`, where 📥 denotes Bridge
+  scope, 🤖 denotes the Domain Agent thread, and ⏳ denotes elapsed task time.
+  Replies without task timing omit the duration segment. Markdown and card
+  carriers render the footer as a `>` quote block; plain-text carriers omit
+  quote syntax.
 - `InteractionIntent` is conversational-act interpretation, not channel payload,
   Dynamic UI routing, presentation layout, or execution authority.
 - `ExpressionProfile` owns the semantic expression shape such as report,
@@ -108,11 +127,12 @@ README.md / PRD.md
 - Provider, model, artifact, vector, content-index, and generic Runtime Services
   secret-resolver implementations belong in `agent-runtime-services`, not in
   bridge product runtime modules.
-- The execution endpoint owns task reasoning and risk judgment; helper models
-  may only support bridge-internal, stateless, authority-free processing.
+- The domain agent owns task reasoning and risk judgment through an execution
+  endpoint; helper models may only support bridge-internal, stateless,
+  authority-free processing.
 - Model calls are allowed in both endpoint and bridge-internal processing
-  layers, but endpoint models decide and execute work while bridge helper
-  models must not choose tools, approve risk, change cwd/session/profile,
+  layers, but domain-agent endpoint models decide and execute work while bridge
+  helper models must not choose tools, approve risk, change cwd/session/profile,
   invoke shell/filesystem/network actions, or override endpoint model/config/env.
 - Helper models return typed proposals or typed artifacts. Policy and
   deterministic planners decide whether proposals are accepted.
@@ -141,6 +161,9 @@ README.md / PRD.md
 - `exec` and `app-server` are endpoint implementations behind the same agent
   boundary. Keep the exec path as fallback when app-server protocol behavior
   changes.
+- P0 does not add ACP, A2A, a public ingress, or a Codex plugin/skill transport.
+  Those may later adapt the same provider-neutral AgentSignal boundary without
+  changing Bridge carrier authority.
 - LaunchAgent is a macOS runtime adapter, not a generic architecture primitive.
 - External project references belong in README References. Fold adopted ideas
   into project capabilities, contracts, or roadmap instead of creating
@@ -151,7 +174,7 @@ README.md / PRD.md
 Read [architecture/](./architecture/) before changing framework boundaries,
 adding a channel, adding an execution endpoint, or wiring model/storage/compute
 resources. Use [architecture/agentic-ontology.md](./architecture/agentic-ontology.md)
-as the target product architecture for bounded domain-agent behavior.
+as the target product architecture for bounded bridge-agent behavior.
 
 Read [agent-devops/](./agent-devops/) before changing repo governance, durable
 contract indexing, drift checks, replay evidence, or agent-maintained harness
@@ -225,7 +248,7 @@ Diagnose the failing ontology object:
 
 General fix order: reconstruct the incident, justify bridge mediation, classify
 the ontology object, mark state, use model capability when cognition is needed,
-preserve execution-agent authority, generate typed proposals, plan presentation
+preserve domain-agent authority, generate typed proposals, plan presentation
 from surface, then adjust carrier rendering only if lowering still fails.
 
 ## Commands

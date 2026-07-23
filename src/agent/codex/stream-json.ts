@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../types';
+import { extractAgentSignals, stripAgentSignalBlocks } from '../../signal/protocol';
 
 interface CodexRawEvent {
   type?: string;
@@ -45,7 +46,11 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
 
   if (evt.type === 'item.completed' && evt.item) {
     if (evt.item.type === 'agent_message' && typeof evt.item.text === 'string' && evt.item.text) {
-      yield { type: 'text', delta: evt.item.text };
+      for (const signal of extractAgentSignals(evt.item.text)) {
+        yield { type: 'signal', signal };
+      }
+      const visible = stripAgentSignalBlocks(evt.item.text);
+      if (visible) yield { type: 'text', delta: visible };
       return;
     }
 

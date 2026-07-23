@@ -5,6 +5,7 @@ import type { CardActionEvent, NormalizedMessage } from '@larksuiteoapi/node-sdk
 import type { AgentAdapter, AgentRunOptions } from '../agent/types';
 import type { AppConfig } from '../config/schema';
 import { SessionStore } from '../session/store';
+import { ProactiveCorrelationStore } from '../signal/correlation-store';
 import { WorkspaceStore } from '../workspace/store';
 import { startChannel } from './channel';
 
@@ -44,6 +45,7 @@ const larkMock = vi.hoisted(() => {
         v1: {
           message: {
             reply: vi.fn(async () => ({ data: { message_id: 'om_managed_approval' } })),
+            get: vi.fn(async () => ({ data: { items: [] } })),
           },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
@@ -136,6 +138,7 @@ describe('channel gateway modes', () => {
     expect(prompts[0]).toContain('直接转给 agent');
     expect(prompts[0]).toContain('<plain_text_response_template>');
     expect(prompts[0]).not.toContain('<agent_interaction_protocol>');
+    expect(prompts[0]).not.toContain('<agent_signal_protocol>');
     expect(prompts[0]).not.toContain('<presentation_contract>');
     expect(prompts[0]).not.toContain('<bridge_context>');
     expect(prompts[0]).not.toContain('<interaction_intent>');
@@ -308,6 +311,47 @@ describe('channel gateway modes', () => {
     await bridge.disconnect();
   });
 
+  test('rejects an approval when gateway mode changes before execution', async () => {
+    const runs: AgentRunOptions[] = [];
+    const cfg = config({ gatewayMode: 'adapter', messageReply: 'card' });
+    const sessions = new SessionStore(
+      join(tmpdir(), `aib-sessions-${Date.now()}-approval-context-change.json`),
+    );
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithText('must not run', [], runs),
+      sessions,
+      workspaces: new WorkspaceStore(
+        join(tmpdir(), `aib-workspaces-${Date.now()}-approval-context-change.json`),
+      ),
+      controls: controls(cfg),
+    });
+
+    await larkMock.state.handlers?.message?.(message('/approve preserve adapter semantics'));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(latestApprovalCard()).toBeDefined());
+    const execute = collectButtonValues(latestApprovalCard()).find(
+      (value) => value.approval_action === 'execute',
+    );
+    expect(execute).toBeDefined();
+
+    sessions.setGatewayMode('oc_123', 'relay');
+    await larkMock.state.handlers?.cardAction?.({
+      chatId: 'oc_123',
+      messageId: 'om_changed_gateway_mode',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: execute },
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(runs).toHaveLength(0);
+    expect(JSON.stringify(larkMock.state.send.mock.calls.at(-1)?.[1])).toContain(
+      '执行上下文已变化',
+    );
+
+    await bridge.disconnect();
+  });
+
   test('invalidates prior task state and approvals when cwd resets the scope context', async () => {
     const task = 'summarize the legacy workspace state';
     const runs: AgentRunOptions[] = [];
@@ -332,6 +376,8 @@ describe('channel gateway modes', () => {
     await larkMock.state.handlers?.message?.(message('/status'));
     const statusPayload = larkMock.state.send.mock.calls.at(-1)?.[1];
     expect(JSON.stringify(statusPayload)).not.toContain(task);
+    expect(JSON.stringify(statusPayload)).toContain('> Session：📥 - oc_123');
+    expect(JSON.stringify(statusPayload)).toContain('🤖 - -');
 
     await larkMock.state.handlers?.cardAction?.({
       chatId: 'oc_123',
@@ -515,6 +561,9 @@ describe('channel gateway modes', () => {
         expect.objectContaining({ replyTo: expect.any(String) }),
       );
     });
+    const finalTextPayload = larkMock.state.send.mock.calls.at(-1)?.[1] as { markdown?: string };
+    expect(finalTextPayload.markdown).toContain('> Session：📥 - oc_123 | 🤖 - -');
+    expect(finalTextPayload.markdown).toContain('| ⏳ - ');
     expect(larkMock.state.stream).not.toHaveBeenCalled();
 
     await bridge.disconnect();
@@ -815,12 +864,291 @@ describe('channel gateway modes', () => {
     expect(saveInput.body).toContain('"schema":"agent-interaction-bridge.turn-trace.v1"');
     expect(saveInput.body).toContain('"previousArtifactId":"trace-artifact-prev"');
     expect(saveInput.body).toContain('"stage":"message_received"');
-    expect(saveInput.body).toContain('sender_type=app sender_app_id=cli_proxy');
-    expect(saveInput.body).toContain('@_user_1 name=Bridge Bot (id=cli_bridge)');
+    expect(saveInput.body).toContain('sender_type=app');
+    expect(saveInput.body).toContain('mentions: @Bridge Bot');
+    expect(saveInput.body).not.toContain('cli_proxy');
+    expect(saveInput.body).not.toContain('cli_bridge');
     expect(saveInput.body).toContain('"stage":"gateway_resolved"');
     expect(saveInput.body).toContain('"stage":"run_started"');
     expect(saveInput.body).toContain('"stage":"run_finished"');
     expect(sessions.getTurnTraceArtifactId('oc_123')).toBe('trace-artifact-1');
+
+    await bridge.disconnect();
+  });
+
+  test('audits a Domain Agent proactive signal and resumes its session from the human reply', async () => {
+    const runs: AgentRunOptions[] = [];
+    const prompts: string[] = [];
+    const actionRecords: Array<Record<string, unknown>> = [];
+    const runtimeCall = vi.fn(async (capabilityId: string, input: {
+      id?: string;
+      data?: Record<string, unknown>;
+    }) => {
+      if (capabilityId === 'record.upsert') {
+        if (input.data) actionRecords.push(input.data);
+        return {
+          status: 'ok',
+          capabilityId,
+          providerId: 'test-record-store',
+          modelId: 'not-applicable',
+          evidence: [],
+          record: { id: input.id },
+        };
+      }
+      return {
+        status: 'failed',
+        capabilityId,
+        providerId: 'mock-runtime-services',
+        modelId: 'not-applicable',
+        evidence: [{ kind: 'mock_failure', message: 'not needed by this test' }],
+      };
+    });
+    runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
+      {
+        id: 'model.language_completion',
+        kind: 'model',
+        capability: 'intent',
+        purpose: 'test',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+      {
+        id: 'storage.record_store',
+        kind: 'storage',
+        capability: 'record store',
+        purpose: 'ActionLog',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+    ], runtimeCall));
+    larkMock.state.send.mockResolvedValue({ messageId: 'om_proactive_1' });
+    const cfg = config({ gatewayMode: 'adapter', messageReply: 'card' });
+    const correlationPath = join(tmpdir(), `aib-correlations-${Date.now()}.json`);
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithProactiveSignal(prompts, runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-proactive.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-proactive.json`)),
+      controls: controls(cfg),
+      proactiveCorrelations: new ProactiveCorrelationStore({ path: correlationPath }),
+    });
+
+    await larkMock.state.handlers?.message?.({
+      ...message('开始任务'),
+      messageId: 'om_origin_1',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await vi.waitFor(() => expect(actionRecords.some(
+      (record) => record.eventType === 'delivery_succeeded',
+    )).toBe(true));
+    expect(prompts[0]).toContain('<agent_signal_protocol>');
+    expect(larkMock.state.send).toHaveBeenCalledWith(
+      'oc_123',
+      expect.any(Object),
+      expect.objectContaining({ replyTo: 'om_origin_1' }),
+    );
+    const proactivePayload = larkMock.state.send.mock.calls.find((call) =>
+      JSON.stringify(call[1]).includes('需要确认'),
+    )?.[1];
+    expect(JSON.stringify(proactivePayload)).toContain('> Session：📥 - oc_123');
+    expect(JSON.stringify(proactivePayload)).toContain('🤖 - session_');
+
+    await larkMock.state.handlers?.message?.({
+      ...message('继续执行'),
+      messageId: 'om_reply_1',
+      replyToMessageId: 'om_proactive_1',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+
+    expect(runs[1]?.sessionId).toBe('session_1');
+    expect(actionRecords.map((record) => record.eventType)).toEqual(expect.arrayContaining([
+      'outbound_intent_accepted',
+      'delivery_succeeded',
+      'reply_correlated',
+      'reply_consumed',
+      'resume_succeeded',
+    ]));
+
+    await bridge.disconnect();
+  });
+
+  test('consumes a Domain Agent interaction callback only once in its creating scope', async () => {
+    const runs: AgentRunOptions[] = [];
+    const runtimeCall = vi.fn(async (capabilityId: string, input: {
+      id?: string;
+    }) => {
+      if (capabilityId === 'record.upsert') {
+        return {
+          status: 'ok',
+          capabilityId,
+          providerId: 'test-record-store',
+          modelId: 'not-applicable',
+          evidence: [],
+          record: { id: input.id },
+        };
+      }
+      return {
+        status: 'failed',
+        capabilityId,
+        providerId: 'mock-runtime-services',
+        modelId: 'not-applicable',
+        evidence: [{ kind: 'mock_failure', message: 'not needed by this test' }],
+      };
+    });
+    runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
+      {
+        id: 'storage.record_store',
+        kind: 'storage',
+        capability: 'record store',
+        purpose: 'ActionLog',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+    ], runtimeCall));
+    larkMock.state.send.mockResolvedValue({ messageId: 'om_interaction_1' });
+    const cfg = config({ gatewayMode: 'relay', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithInteractionSignal(runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-interaction-once.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-interaction-once.json`)),
+      controls: controls(cfg),
+      proactiveCorrelations: new ProactiveCorrelationStore({
+        path: join(tmpdir(), `aib-correlations-${Date.now()}-interaction-once.json`),
+      }),
+    });
+
+    await larkMock.state.handlers?.message?.(message('开始需要审批的任务'));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    await vi.waitFor(() => expect(
+      larkMock.state.send.mock.calls.flatMap((call) => collectCallbackValues(call[1])),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ hitl_action: 'approve' }),
+    ])));
+    const approve = larkMock.state.send.mock.calls
+      .flatMap((call) => collectCallbackValues(call[1]))
+      .find((value) => value.hitl_action === 'approve');
+    expect(approve).toEqual(expect.objectContaining({
+      __agent_cb: true,
+      interaction_id: 'domain-risk-1',
+    }));
+
+    const click = {
+      chatId: 'oc_123',
+      messageId: 'om_interaction_1',
+      operator: { openId: 'ou_123', name: 'Ada' },
+      action: { value: approve },
+    } as unknown as CardActionEvent;
+    await larkMock.state.handlers?.cardAction?.(click);
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+    expect(runs[1]?.prompt).toContain('用户已批准交互请求 domain-risk-1');
+    expect(runs[1]?.prompt).not.toContain('__agent_cb');
+
+    await larkMock.state.handlers?.cardAction?.(click);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(runs).toHaveLength(2);
+
+    await larkMock.state.handlers?.cardAction?.({
+      ...click,
+      chatId: 'oc_other',
+      messageId: 'om_copied_interaction',
+    } as unknown as CardActionEvent);
+    await vi.advanceTimersByTimeAsync(700);
+    expect(runs).toHaveLength(2);
+
+    await bridge.disconnect();
+  });
+
+  test('audits a failed proactive-session resume before retrying with a fresh session', async () => {
+    const runs: AgentRunOptions[] = [];
+    const actionRecords: Array<Record<string, unknown>> = [];
+    const runtimeCall = vi.fn(async (capabilityId: string, input: {
+      id?: string;
+      data?: Record<string, unknown>;
+    }) => {
+      if (capabilityId === 'record.upsert') {
+        if (input.data) actionRecords.push(input.data);
+        return {
+          status: 'ok',
+          capabilityId,
+          providerId: 'test-record-store',
+          modelId: 'not-applicable',
+          evidence: [],
+          record: { id: input.id },
+        };
+      }
+      return {
+        status: 'failed',
+        capabilityId,
+        providerId: 'mock-runtime-services',
+        modelId: 'not-applicable',
+        evidence: [{ kind: 'mock_failure', message: 'not needed by this test' }],
+      };
+    });
+    runtimeServicesMock.createRuntimeServicesPortContext.mockResolvedValue(runtimeContext([
+      {
+        id: 'model.language_completion',
+        kind: 'model',
+        capability: 'intent',
+        purpose: 'test',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+      {
+        id: 'storage.record_store',
+        kind: 'storage',
+        capability: 'record store',
+        purpose: 'ActionLog',
+        status: 'available',
+        operatorAction: 'configure runtime services',
+      },
+    ], runtimeCall));
+    larkMock.state.send.mockResolvedValue({ messageId: 'om_proactive_failure' });
+    const cfg = config({ gatewayMode: 'adapter', messageReply: 'card' });
+    const bridge = await startChannel({
+      cfg,
+      agent: agentWithFailedProactiveResume(runs),
+      sessions: new SessionStore(join(tmpdir(), `aib-sessions-${Date.now()}-resume-failure.json`)),
+      workspaces: new WorkspaceStore(join(tmpdir(), `aib-workspaces-${Date.now()}-resume-failure.json`)),
+      controls: controls(cfg),
+      proactiveCorrelations: new ProactiveCorrelationStore({
+        path: join(tmpdir(), `aib-correlations-${Date.now()}-resume-failure.json`),
+      }),
+    });
+
+    await larkMock.state.handlers?.message?.({
+      ...message('开始任务'),
+      messageId: 'om_origin_failure',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(actionRecords.some(
+      (record) => record.eventType === 'delivery_succeeded',
+    )).toBe(true));
+
+    await larkMock.state.handlers?.message?.({
+      ...message('继续执行'),
+      messageId: 'om_reply_failure',
+      replyToMessageId: 'om_proactive_failure',
+    });
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(runs).toHaveLength(3));
+
+    expect(runs[1]?.sessionId).toBe('session_1');
+    expect(runs[2]?.sessionId).toBeUndefined();
+    expect(actionRecords.map((record) => record.eventType)).toEqual(expect.arrayContaining([
+      'reply_correlated',
+      'reply_consumed',
+      'resume_failed',
+    ]));
+    expect(actionRecords.find((record) => record.eventType === 'resume_failed')).toMatchObject({
+      sessionId: 'session_1',
+      observedSessionId: 'session_1',
+      terminal: 'error',
+    });
 
     await bridge.disconnect();
   });
@@ -895,6 +1223,127 @@ function agentWithText(
   };
 }
 
+function agentWithProactiveSignal(
+  prompts: string[],
+  runs: AgentRunOptions[],
+): AgentAdapter {
+  let count = 0;
+  return {
+    id: 'agent_runtime.codex_app_server',
+    displayName: 'Codex App Server Test',
+    isAvailable: async () => true,
+    run(opts: AgentRunOptions) {
+      prompts.push(opts.prompt);
+      runs.push(opts);
+      const current = count++;
+      return {
+        pid: 123,
+        events: (async function* () {
+          yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+          if (current === 0) {
+            yield {
+              type: 'signal' as const,
+              signal: {
+                id: 'domain-status-1',
+                kind: 'status' as const,
+                title: '需要确认',
+                summary: '请回复后继续。',
+                state: 'waiting_for_human',
+              },
+            };
+          } else {
+            yield { type: 'text' as const, delta: '已恢复原会话。' };
+          }
+          yield { type: 'done' as const, sessionId: 'session_1' };
+        })(),
+        stop: async () => {},
+        waitForExit: async () => true,
+      };
+    },
+  };
+}
+
+function agentWithFailedProactiveResume(runs: AgentRunOptions[]): AgentAdapter {
+  let count = 0;
+  return {
+    id: 'agent_runtime.codex_app_server',
+    displayName: 'Codex App Server Resume Failure Test',
+    isAvailable: async () => true,
+    run(opts: AgentRunOptions) {
+      runs.push(opts);
+      const current = count++;
+      return {
+        pid: 123 + current,
+        events: (async function* () {
+          if (current === 0) {
+            yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+            yield {
+              type: 'signal' as const,
+              signal: {
+                id: 'domain-status-failure',
+                kind: 'status' as const,
+                title: '需要确认',
+                summary: '请回复后继续。',
+                state: 'waiting_for_human',
+              },
+            };
+            yield { type: 'done' as const, sessionId: 'session_1' };
+            return;
+          }
+          if (current === 1) {
+            yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+            yield { type: 'error' as const, message: 'resume unavailable' };
+            return;
+          }
+          yield { type: 'system' as const, sessionId: 'session_2', cwd: opts.cwd };
+          yield { type: 'text' as const, delta: '已改用新会话继续。' };
+          yield { type: 'done' as const, sessionId: 'session_2' };
+        })(),
+        stop: async () => {},
+        waitForExit: async () => true,
+      };
+    },
+  };
+}
+
+function agentWithInteractionSignal(runs: AgentRunOptions[]): AgentAdapter {
+  let count = 0;
+  return {
+    id: 'agent_runtime.codex_app_server',
+    displayName: 'Codex App Server Test',
+    isAvailable: async () => true,
+    run(opts: AgentRunOptions) {
+      runs.push(opts);
+      const current = count++;
+      return {
+        pid: 123,
+        events: (async function* () {
+          yield { type: 'system' as const, sessionId: 'session_1', cwd: opts.cwd };
+          if (current === 0) {
+            yield {
+              type: 'signal' as const,
+              signal: {
+                id: 'domain-risk-1',
+                kind: 'risk_approval' as const,
+                title: '批准危险操作',
+                summary: '需要人工确认后继续。',
+                risk: 'destructive filesystem change',
+                proposedAction: 'remove generated output',
+                actions: ['approve', 'reject'],
+              },
+            };
+          } else {
+            yield { type: 'text' as const, delta: '已按首次决定继续。' };
+          }
+          yield { type: 'done' as const, sessionId: 'session_1' };
+        })(),
+        stop: async () => {},
+        waitForExit: async () => true,
+      };
+    },
+  };
+}
+
 function runtimeContext(resources: Array<{
   id: string;
   kind: string;
@@ -935,6 +1384,20 @@ function collectButtonValues(node: unknown): Record<string, unknown>[] {
     ? [value.value as Record<string, unknown>]
     : [];
   return own.concat(Object.values(value).flatMap(collectButtonValues));
+}
+
+function collectCallbackValues(node: unknown): Record<string, unknown>[] {
+  if (!node || typeof node !== 'object') return [];
+  const value = node as Record<string, unknown>;
+  const behaviors = Array.isArray(value.behaviors) ? value.behaviors : [];
+  const own = behaviors.flatMap((behavior) => {
+    if (!behavior || typeof behavior !== 'object') return [];
+    const callbackValue = (behavior as { value?: unknown }).value;
+    return callbackValue && typeof callbackValue === 'object'
+      ? [callbackValue as Record<string, unknown>]
+      : [];
+  });
+  return own.concat(Object.values(value).flatMap(collectCallbackValues));
 }
 
 function latestApprovalCard(): object | undefined {

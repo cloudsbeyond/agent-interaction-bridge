@@ -2,6 +2,13 @@ import type { NormalizedMessage } from '@larksuiteoapi/node-sdk';
 import type { LocalAttachment } from '../media/cache';
 import type { InteractionIntent, StatelessIntentJudge } from '../interaction/intent';
 import type { GatewayMode, ReplyMentionTarget } from '../config/schema';
+import type { InteractionPresentationPlan } from '../interaction/presentation-plan';
+import {
+  createAgentPromptEnvelope,
+  normalizeAgentPromptContent,
+  type AgentPromptEnvelope,
+  type AgentPromptSection,
+} from '../interaction/prompt';
 import { buildInteractionTurnPlanWithJudge } from '../runtime/interaction-runtime';
 import {
   buildFeishuBridgeContext,
@@ -9,11 +16,12 @@ import {
   stripFeishuAttachmentRefs,
   toInteractionAttachments,
 } from './intake-contract';
-import { renderQuotedBlock, type QuotedContext } from './quote';
+import { buildQuotedPromptSections, type QuotedContext } from './quote';
 
 export interface BuiltFeishuPromptPlan {
-  prompt: string;
+  envelope: AgentPromptEnvelope;
   intent: InteractionIntent;
+  presentationPlan?: InteractionPresentationPlan;
   userText: string;
 }
 
@@ -34,26 +42,33 @@ export async function buildFeishuPromptPlan(
   const fileKeys = input.batch.flatMap((message) => message.resources.map((resource) => resource.fileKey));
   const texts =
     input.userTextOverride !== undefined
-      ? [input.userTextOverride.trim()].filter(Boolean)
+      ? [normalizeAgentPromptContent(input.userTextOverride)].filter(Boolean)
       : input.batch
-          .map((message) => stripFeishuAttachmentRefs(message.content, fileKeys).trim())
+          .map((message) => normalizeAgentPromptContent(
+            stripFeishuAttachmentRefs(message.content, fileKeys),
+          ))
           .filter(Boolean);
-  const quoteBlock = renderQuotedBlock(input.quotes ?? []);
+  const quotedSections = buildQuotedPromptSections(input.quotes ?? []);
   const replyMentionTargets = renderReplyMentionTargets(input.replyMentionTargets);
   const metadataBlock = [
     renderFeishuMessageMetadataBlock(input.batch),
     renderReplyMentionTargetsBlock(replyMentionTargets),
   ].filter(Boolean).join('\n\n');
   const userText = texts.join('\n\n');
-  if (input.gatewayMode === 'relay') {
+  const gatewayMode = input.gatewayMode ?? 'adapter';
+  if (gatewayMode === 'relay') {
     return {
-      prompt: buildRelayPrompt({
-        userText,
-        quoteBlock,
-        metadataBlock,
-        attachments: toInteractionAttachments(input.attachments),
+      envelope: createAgentPromptEnvelope({
+        mode: gatewayMode,
+        channel: 'feishu',
+        sections: buildRelayPromptSections({
+          userText,
+          quotedSections,
+          metadataBlock,
+          attachments: toInteractionAttachments(input.attachments),
+        }),
       }),
-      intent: relayIntent(Boolean(input.hasPriorContext || quoteBlock)),
+      intent: relayIntent(Boolean(input.hasPriorContext || quotedSections.length > 0)),
       userText,
     };
   }
@@ -64,39 +79,41 @@ export async function buildFeishuPromptPlan(
         ...buildFeishuBridgeContext(input.batch[0], input.batch),
         reply_mention_targets: replyMentionTargets,
       },
-      quotedBlocks: quoteBlock ? [quoteBlock] : [],
+      quotedSections,
       userText,
       attachments: toInteractionAttachments(input.attachments),
-      hasPriorContext: Boolean(input.hasPriorContext || quoteBlock),
+      hasPriorContext: Boolean(input.hasPriorContext || quotedSections.length > 0),
     },
     input.intentJudge,
   );
   return {
-    prompt: plan.prompt,
+    envelope: createAgentPromptEnvelope({
+      mode: gatewayMode,
+      channel: 'feishu',
+      sections: plan.sections,
+    }),
     intent: plan.intent,
+    ...(plan.presentationPlan ? { presentationPlan: plan.presentationPlan } : {}),
     userText,
   };
 }
 
-function buildRelayPrompt(input: {
+function buildRelayPromptSections(input: {
   userText: string;
-  quoteBlock: string;
+  quotedSections: AgentPromptSection[];
   metadataBlock: string;
   attachments: ReturnType<typeof toInteractionAttachments>;
-}): string {
+}): AgentPromptSection[] {
   const text = input.userText || (input.attachments.length > 0 ? '请看下面的附件。' : '');
   const attachmentBlock = input.attachments.length > 0
     ? `附件（本地路径）：\n${renderRelayAttachmentLines(input.attachments)}`
     : '';
   return [
-    input.quoteBlock,
-    input.metadataBlock,
-    text,
-    attachmentBlock,
-  ]
-    .filter(Boolean)
-    .join('\n\n')
-    .trim();
+    ...input.quotedSections,
+    { kind: 'carrier_metadata', content: input.metadataBlock },
+    { kind: 'user_message', content: text },
+    { kind: 'attachments', content: attachmentBlock },
+  ].filter((section): section is AgentPromptSection => Boolean(section.content));
 }
 
 function relayIntent(requiresPriorContext: boolean): InteractionIntent {
@@ -127,9 +144,8 @@ function renderReplyMentionTargets(
   const lines = (targets ?? [])
     .map((target) => {
       const name = target.name?.trim();
-      const id = target.id?.trim();
-      if (!name || !id) return '';
-      return `@${name} id=${id}`;
+      if (!name) return '';
+      return `@${name.replace(/^@+/u, '')}`;
     })
     .filter(Boolean);
   return lines.length > 0 ? lines.join('; ') : undefined;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { appendSessionIdentityCard } from './session-identity';
 import { renderCard } from './run-renderer';
 import type { RunState } from './run-state';
 
@@ -64,5 +65,43 @@ describe('renderCard', () => {
 
     expect(serialized).not.toContain('agent_interaction');
     expect(serialized).not.toContain('bot-profile');
+  });
+
+  test('keeps the Bridge-owned session footer as one standalone card element', () => {
+    const state: RunState = {
+      terminal: 'done',
+      footer: null,
+      reasoning: { content: '', active: false },
+      blocks: [
+        {
+          kind: 'text',
+          streaming: false,
+          content: [
+            '**检查点**',
+            '- footer 位于卡片底部',
+            '',
+            '> Session：Bridge - old-bridge | Domain - old-domain',
+          ].join('\n'),
+        },
+      ],
+    };
+
+    const card = appendSessionIdentityCard(
+      renderCard(state),
+      {
+        bridge: 'bridge-scope-prefix-50d3c05e',
+        domain: '019f89b0-domain-session-suffix',
+        elapsedMs: 75_000,
+      },
+    ) as { body: { elements: Array<{ tag?: string; content?: string }> } };
+    const serialized = JSON.stringify(card);
+
+    expect(serialized.match(/Session：📥 -/gu)).toHaveLength(1);
+    expect(serialized).not.toContain('old-bridge');
+    expect(card.body.elements.at(-1)).toEqual({
+      tag: 'markdown',
+      content: '> Session：📥 - 50d3c05e | 🤖 - 019f89b0 | ⏳ - 1m 15s',
+      text_size: 'notation',
+    });
   });
 });

@@ -25,13 +25,30 @@ describe('Feishu signal delivery', () => {
       ],
       undefined,
       onSecondaryError,
-    )).resolves.toBeUndefined();
+    )).resolves.toEqual({ primary: undefined });
 
     expect(sent).toEqual([
       { markdown: '图片已生成' },
       { image: { source: '/tmp/generated.png' } },
     ]);
     expect(onSecondaryError).toHaveBeenCalledWith(expect.any(Error), { image: { source: '/tmp/generated.png' } });
+  });
+
+  test('returns the primary carrier message id for reply correlation', async () => {
+    const sender: FeishuSignalMessageSender = {
+      async send() {
+        return { messageId: 'om_proactive_1' };
+      },
+    };
+
+    await expect(sendFeishuSignalInputs(
+      sender,
+      'chat-id',
+      [{ markdown: '主动消息' }],
+    )).resolves.toEqual({
+      primary: { messageId: 'om_proactive_1' },
+      messageId: 'om_proactive_1',
+    });
   });
 
   test('still fails when the primary message cannot be sent', async () => {

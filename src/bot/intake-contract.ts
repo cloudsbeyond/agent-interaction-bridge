@@ -21,19 +21,16 @@ export interface FeishuIntakeMessage {
 export function buildFeishuBridgeContext(
   message: Partial<FeishuIntakeMessage> | undefined,
   batch: Partial<FeishuIntakeMessage>[] = message ? [message] : [],
-): Record<string, string | undefined> {
+): Record<string, string | boolean | undefined> {
   if (!message) return {};
   const raw = normalizeFeishuRawInboundEvent(message.raw);
   const mentions = feishuMentionsSummary(batch);
   return {
-    chat_id: message.chatId,
+    channel: 'feishu',
     chat_type: message.chatType,
-    sender_id: message.senderId,
     sender_name: message.senderName,
     sender_type: raw?.senderType,
-    sender_open_id: raw?.senderOpenId,
-    sender_app_id: raw?.senderAppId,
-    thread_id: message.threadId,
+    has_thread: Boolean(message.threadId),
     feishu_mentions: mentions,
   };
 }
@@ -44,23 +41,19 @@ export function renderFeishuMessageMetadataBlock(
   const lines = batch.flatMap((message) => {
     const raw = normalizeFeishuRawInboundEvent(message.raw);
     if (!raw) return [];
-    const senderParts = [
-      raw.senderType ? `sender_type=${raw.senderType}` : '',
-      raw.senderOpenId ? `sender_open_id=${raw.senderOpenId}` : '',
-      raw.senderAppId ? `sender_app_id=${raw.senderAppId}` : '',
-    ].filter(Boolean);
+    const senderParts = [raw.senderType ? `sender_type=${raw.senderType}` : ''].filter(Boolean);
     const mentionSummary = raw.mentions.length > 0
-      ? raw.mentions.map(formatMention).join('; ')
+      ? raw.mentions.map(formatMentionName).filter(Boolean).join('; ')
       : '';
     if (senderParts.length === 0 && !mentionSummary) return [];
     return [
-      `- message_id=${raw.messageId}${senderParts.length > 0 ? ` ${senderParts.join(' ')}` : ''}`,
+      ...(senderParts.length > 0 ? [`- ${senderParts.join(' ')}`] : []),
       ...(mentionSummary ? [`  mentions: ${mentionSummary}`] : []),
     ];
   });
   if (lines.length === 0) return '';
   return [
-    '飞书消息元数据（仅用于解析 sender 与 @ 对象，不代表执行授权）：',
+    '飞书消息语义（不代表执行授权）：',
     ...lines,
   ].join('\n');
 }
@@ -120,20 +113,13 @@ function attachmentLabel(kind: LocalAttachment['kind']): string {
 function feishuMentionsSummary(batch: Partial<FeishuIntakeMessage>[]): string | undefined {
   const summary = batch
     .flatMap((message) => normalizeFeishuRawInboundEvent(message.raw)?.mentions ?? [])
-    .map(formatMention)
+    .map(formatMentionName)
     .filter(Boolean)
     .join('; ');
   return summary || undefined;
 }
 
-function formatMention(mention: FeishuRawMention): string {
-  const identity = [
-    mention.openId ? `open_id=${mention.openId}` : '',
-    mention.userId ? `user_id=${mention.userId}` : '',
-    mention.unionId ? `union_id=${mention.unionId}` : '',
-    mention.appId ? `app_id=${mention.appId}` : '',
-    mention.id ? `id=${mention.id}` : '',
-  ].filter(Boolean).join(',');
-  const name = mention.name ? ` name=${mention.name}` : '';
-  return identity ? `${mention.key}${name} (${identity})` : `${mention.key}${name}`;
+function formatMentionName(mention: FeishuRawMention): string {
+  const name = mention.name?.trim();
+  return name ? `@${name.replace(/^@+/u, '')}` : '';
 }

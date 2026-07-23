@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import type { MessageReplyMode } from '../config/schema';
+import type { GatewayMode, MessageReplyMode } from '../config/schema';
+import type { AgentPromptEnvelope } from '../interaction/prompt';
 import {
   validateApprovalDecisionPayload,
   type ApprovalDecision,
@@ -14,13 +15,17 @@ export interface PendingApproval {
   chatId: string;
   messageId: string;
   threadId?: string;
-  prompt: string;
+  promptEnvelope: AgentPromptEnvelope;
   task: string;
   cwd: string;
   sessionId?: string;
   model?: string;
   replyMode?: MessageReplyMode;
   agentProfileId?: string;
+  gatewayMode: GatewayMode;
+  contextVersion: string;
+  proactiveCorrelationId?: string;
+  proactiveSessionId?: string;
   createdAt: number;
 }
 

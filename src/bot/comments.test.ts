@@ -52,6 +52,14 @@ describe('cloud-doc comment mentions', () => {
       runOptions[0]?.cwd ?? '',
       `codex-test:${AGENT_PROFILE_CODEX_HOST_ID}`,
     )).toBe('session_1');
+    const request = channel.rawClient.request as unknown as ReturnType<typeof vi.fn>;
+    const replyCall = request.mock.calls.find((call) =>
+      call[0]?.data?.content?.elements?.[0]?.text_run?.text,
+    );
+    const requestText = replyCall?.[0]?.data?.content?.elements?.[0]?.text_run?.text;
+    expect(requestText).toContain('Session：📥 - oc_token');
+    expect(requestText).toContain('🤖 - session_');
+    expect(requestText).toContain('| ⏳ - ');
   });
 });
 

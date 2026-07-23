@@ -3,8 +3,8 @@ import {
   classifyInteractionIntentWithJudge,
   classifyInteractionIntent,
   renderInteractionIntentBlock,
-  requestsCardPresentation,
 } from './intent';
+import { requestsCardPresentation } from './presentation-plan';
 
 describe('interaction intent', () => {
   test('recognizes presentation criticism as a rewrite request', () => {
@@ -59,7 +59,7 @@ describe('interaction intent', () => {
     expect(renderInteractionIntentBlock(intent)).toBe('');
   });
 
-  test('adds metric snapshot guidance for market quote requests without forcing cards', () => {
+  test('keeps market quote requests as pure task intents', () => {
     const intent = classifyInteractionIntent({
       text: '看看指标 A 和指标 B 的行情',
       hasPriorContext: false,
@@ -67,13 +67,12 @@ describe('interaction intent', () => {
     });
 
     expect(intent.kind).toBe('task_request');
-    expect(intent.presentation).toBeUndefined();
-    expect(intent.guidance.join('\n')).toContain('metric_snapshot');
-    expect(intent.guidance.join('\n')).toContain('Do not concatenate');
-    expect(renderInteractionIntentBlock(intent)).toContain('<interaction_intent>');
+    expect(intent).not.toHaveProperty('presentation');
+    expect(intent.guidance).toEqual([]);
+    expect(renderInteractionIntentBlock(intent)).toBe('');
   });
 
-  test('activates Dynamic UI for visual task scenarios', () => {
+  test('keeps visual task scenarios as pure task intents', () => {
     for (const text of [
       '对比一下 Codex CLI 和 app-server 的差异',
       '用图标说明这几个状态',
@@ -88,13 +87,9 @@ describe('interaction intent', () => {
       });
 
       expect(intent.kind).toBe('task_request');
-      expect(intent.presentation).toEqual({
-        representation: 'interactive_card',
-        source: 'dynamic_ui_heuristic',
-      });
-      expect(intent.guidance.join('\n')).toContain('Dynamic UI');
-      expect(intent.guidance.join('\n')).toContain('Do not concatenate section headings');
-      expect(renderInteractionIntentBlock(intent)).toContain('dynamic_ui_heuristic');
+      expect(intent).not.toHaveProperty('presentation');
+      expect(intent.guidance).toEqual([]);
+      expect(renderInteractionIntentBlock(intent)).toBe('');
     }
   });
 
@@ -106,7 +101,7 @@ describe('interaction intent', () => {
     });
 
     expect(intent.kind).toBe('task_request');
-    expect(intent.presentation).toBeUndefined();
+    expect(intent).not.toHaveProperty('presentation');
     expect(renderInteractionIntentBlock(intent)).toBe('');
   });
 
@@ -119,13 +114,10 @@ describe('interaction intent', () => {
     });
 
     expect(intent.kind).toBe('presentation_feedback');
-    expect(intent.presentation).toEqual({
-      representation: 'interactive_card',
-      source: 'explicit_user_feedback',
-    });
+    expect(intent).not.toHaveProperty('presentation');
     expect(requestsCardPresentation(text)).toBe(true);
-    expect(intent.guidance.join('\n')).toContain('card-ready');
-    expect(intent.guidance.join('\n')).toContain('do not describe a hypothetical card');
+    expect(intent.guidance.join('\n')).toContain('feedback about the prior answer');
+    expect(intent.guidance.join('\n')).not.toContain('card-ready');
   });
 
   test('treats structure and visualization criticism as an interactive presentation request', () => {
@@ -137,11 +129,9 @@ describe('interaction intent', () => {
     });
 
     expect(intent.kind).toBe('presentation_feedback');
-    expect(intent.presentation).toEqual({
-      representation: 'interactive_card',
-      source: 'explicit_user_feedback',
-    });
-    expect(intent.guidance.join('\n')).toContain('visual/card-ready');
+    expect(intent).not.toHaveProperty('presentation');
+    expect(intent.guidance.join('\n')).toContain('feedback about the prior answer');
+    expect(intent.guidance.join('\n')).not.toContain('visual/card-ready');
   });
 
   test('uses a stateless judge only after rule-based classification stays at task fallback', async () => {

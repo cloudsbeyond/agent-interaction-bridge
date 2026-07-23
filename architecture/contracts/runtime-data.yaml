@@ -22,7 +22,7 @@ contracts:
       owner: human
       status: frozen
       path: architecture/contracts/runtime-data.yaml
-      freeze_signal: Agentic L0-L2 convergence accepted by human owner on 2026-05-29.
+      freeze_signal: Bidirectional bridge correlation state accepted by human owner on 2026-07-22.
       invariants:
         - Runtime data under the local app home must never be committed.
         - Secret values are never printed, stored in git, or exposed through status surfaces.
@@ -32,7 +32,10 @@ contracts:
         - Bridge config may store only caller-owned Runtime Services names (`runtimeServices.artifact_namespace`, `runtimeServices.vector_tableName`, `runtimeServices.record_namespace`, and `runtimeServices.record_tableName`); it must not store Runtime Services provider catalogs, model keys, artifact manifests, vector stores, or storage implementations.
         - Runtime Services data must stay outside git and outside the bridge runtime home by default.
         - Vector indexes are Runtime Services retrieval state and must not be treated as execution endpoint session memory.
-        - Execution endpoint sessions are endpoint-profile state, not bridge semantic memory.
+        - Domain-agent execution sessions are endpoint-profile state, not bridge semantic memory.
+        - Existing-thread binding stores only a validated endpoint session reference plus resolved cwd, runtime/profile key, and context version; Codex rollout contents remain endpoint-owned.
+        - Proactive interaction correlation is bridge-owned `bounded-state` keyed by correlation id and must reference carrier message id, conversation scope, endpoint profile, and originating domain-agent session id without copying the session itself.
+        - ActionLog must durably distinguish reply correlation, one-time reply consumption, and originating-session resume success or failure; carrier or provider logs and `reply_consumed` state alone are insufficient to prove continuation.
         - Runtime Services may support many domain agents, but access must be typed and raw state must not be reused across agents.
         - Provider-side logs or model memory are external-provider-state and must not be trusted for bridge correctness.
         - LaunchAgent is a macOS runtime adapter, not a generic architecture primitive.
@@ -40,11 +43,11 @@ contracts:
         - Canonical tests must use an isolated runtime home and must not write logs, reply-debug records, sessions, or health snapshots into the operator runtime home.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
+          command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/signal/correlation-store.test.ts src/signal/action-log.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
+      generation_command: pnpm test -- src/config/paths.test.ts src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/cli/commands/start.test.ts src/session/store.test.ts src/signal/correlation-store.test.ts src/signal/action-log.test.ts src/runtime/launch-agent.test.ts src/runtime/data-contract.test.ts src/runtime/health.test.ts src/bot/keepalive.test.ts src/test/runtime-home.test.ts src/runtime-services/selector.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -54,6 +57,8 @@ contracts:
       carriers:
         - src/config
         - src/session
+        - src/signal/correlation-store.ts
+        - src/signal/action-log.ts
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
@@ -78,6 +83,8 @@ contracts:
         - src/config/secret-resolver.ts
         - src/session/store.ts
         - src/session/history.ts
+        - src/signal/correlation-store.ts
+        - src/signal/action-log.ts
         - src/workspace/store.ts
         - src/runtime/registry.ts
         - src/runtime/launch-agent.ts
@@ -97,6 +104,8 @@ contracts:
         - src/config/paths.test.ts
         - src/config/schema-agent-endpoint.test.ts
         - src/session/store.test.ts
+        - src/signal/correlation-store.test.ts
+        - src/signal/action-log.test.ts
         - src/runtime/launch-agent.test.ts
         - src/runtime/service-readiness.test.ts
         - src/runtime/data-contract.test.ts

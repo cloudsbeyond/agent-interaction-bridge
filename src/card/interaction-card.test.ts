@@ -24,6 +24,15 @@ describe('interactionCard', () => {
     const card = interactionCard(request);
     const buttons = collectButtons(card);
 
+    expect(card).toMatchObject({
+      schema: '2.0',
+      config: {
+        update_multi: true,
+        width_mode: 'default',
+        summary: { content: 'Delete dist?' },
+      },
+      body: { elements: expect.any(Array) },
+    });
     expect(JSON.stringify(card)).toContain('Delete dist?');
     expect(JSON.stringify(card)).toContain('rm -rf dist');
     expect(buttons.map((b) => (b.text as { content?: string }).content)).toEqual([
@@ -32,11 +41,14 @@ describe('interactionCard', () => {
       '拒绝',
       '只看 patch',
     ]);
-    expect(buttons.map((b) => b.value)).toEqual([
+    expect(buttons.map((b) => (
+      (b.behaviors as Array<{ type?: string; value?: unknown }>)[0]?.value
+    ))).toEqual([
       expect.objectContaining({ __agent_cb: true, hitl_action: 'approve', interaction_id: 'risk-1' }),
       expect.objectContaining({ __agent_cb: true, hitl_action: 'modify', interaction_id: 'risk-1' }),
       expect.objectContaining({ __agent_cb: true, hitl_action: 'reject', interaction_id: 'risk-1' }),
       expect.objectContaining({ __agent_cb: true, hitl_action: 'patch_only', interaction_id: 'risk-1' }),
     ]);
+    expect(buttons.every((button) => !('value' in button))).toBe(true);
   });
 });

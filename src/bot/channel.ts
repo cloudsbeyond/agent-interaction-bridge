@@ -11,14 +11,11 @@ import { prepareAgentProfileRunPlan } from '../agent/profile-policy';
 import { handleCardAction } from '../card/dispatcher';
 import { renderPresentationCard } from '../card/presentation-card';
 import { renderCard } from '../card/run-renderer';
+import { appendSessionIdentityCard } from '../card/session-identity';
 import { isManaged, sendManagedCard, updateManagedCard } from '../card/managed';
 import { taskApprovalCard, taskApprovalDecisionCard } from '../card/task-approval-card';
 import {
-  finalizeIfRunning,
   initialState,
-  markIdleTimeout,
-  markInterrupted,
-  reduce,
   type RunState,
 } from '../card/run-state';
 import { renderText } from '../card/text-renderer';
@@ -51,23 +48,26 @@ import {
   feishuSendInputsForRenderedSignal,
   type FeishuDeliverySupportOptions,
   type FeishuRenderedSignalWithSupport,
+  type FeishuSendInput,
 } from '../signal/feishu-delivery-support';
 import { renderFeishuSignal } from '../signal/feishu-renderer';
 import { interactionRequestToSignal } from '../signal/interaction';
 import type { AgentSignal } from '../signal/router';
+import { bindProactiveSignalToRun } from '../signal/ingress-policy';
+import { ProactiveActionLog } from '../signal/action-log';
+import {
+  ProactiveCorrelationStore,
+  type ProactiveCorrelationRecord,
+} from '../signal/correlation-store';
 import { SignalTimelineStore } from '../signal/timeline';
-import { extractToolResultSignals } from '../signal/tool-events';
 import { sendMacNotification, shouldNotifyMac } from '../signal/mac-notifier';
 import { presentAnswerCard } from '../signal/reply-presentation';
-import type { InteractionRequest } from '../interaction/protocol';
-import { extractInteractionRequests, stripInteractionBlocks } from '../interaction/protocol';
 import {
-  withInteractionProtocol,
-  withRelayPlainTextTemplate,
+  renderAgentPrompt,
+  type AgentPromptEnvelope,
 } from '../interaction/prompt';
 import type { StatelessIntentJudge } from '../interaction/intent';
 import { createBridgeStatelessIntentJudge } from '../interaction/model-judge';
-import { assessToolRisk } from '../interaction/risk-policy';
 import type { ApprovalDecisionAction } from '../task/approval-contract';
 import {
   parseApprovalDecision,
@@ -88,7 +88,12 @@ import {
 } from '../runtime-services/resources';
 import { resolveEffectiveGatewayMode } from '../gateway/mode-policy';
 import { createTurnTraceRecorder } from '../turn-trace/plugin';
+import {
+  appendSessionIdentityMarkdown,
+  type InteractionSessionIdentity,
+} from '../presentation/session-identity';
 import { ActiveRuns, type RunHandle } from './active-runs';
+import { processAgentStream } from './agent-stream';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { startKeepalive } from './keepalive';
@@ -99,8 +104,9 @@ import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, type QuotedContext } from './quote';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { planReplyMarkdown, sendReplyMarkdown, withReplyMentions } from './reply-mentions';
-import { replyModeForInteractionIntent } from './reply-mode-policy';
+import { replyModeForPresentationPlan } from './reply-mode-policy';
 import { buildFeishuPromptPlan } from './prompt-plan';
+import { resolveProactiveReply } from './proactive-reply';
 import { sendFeishuSignalInputs } from './feishu-signal-delivery';
 import { writeFeishuReplyDebugRecord } from './feishu-reply-debug';
 import {
@@ -185,6 +191,7 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   controls: Controls;
   onHealth?: (update: RuntimeHealthUpdate) => void | Promise<void>;
+  proactiveCorrelations?: ProactiveCorrelationStore;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -201,6 +208,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const approvals = new TaskApprovalStore();
   const taskStatus = new TaskStatusStore();
   const signalTimeline = new SignalTimelineStore();
+  const proactiveCorrelations = deps.proactiveCorrelations ?? new ProactiveCorrelationStore();
+  await proactiveCorrelations.load();
+  const correlatedReplies = new Map<string, ProactiveCorrelationRecord>();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
   const chatModeCache = new ChatModeCache();
@@ -303,6 +313,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           getRuntimeServicesContext,
           getStatelessIntentJudge,
           gatewayModeDegradeNotices,
+          proactiveCorrelations,
+          correlatedReplies,
         });
       } catch (err) {
         log.fail('flush', err);
@@ -333,6 +345,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           msg,
           controls,
           chatModeCache,
+          proactiveCorrelations,
+          correlatedReplies,
+          getRuntimeServicesContext,
         }),
       ).catch((err) => log.fail('intake', err));
     },
@@ -453,7 +468,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       pending.cancelAll();
       await channel.disconnect();
       await activeRuns.stopAll();
-      await Promise.allSettled([sessions.flush(), workspaces.flush()]);
+      await Promise.allSettled([
+        sessions.flush(),
+        workspaces.flush(),
+        proactiveCorrelations.flush(),
+      ]);
       await reportHealth({ state: 'stopped', issue: 'carrier_stopped' });
     },
   };
@@ -472,6 +491,9 @@ interface IntakeDeps {
   msg: NormalizedMessage;
   controls: Controls;
   chatModeCache: ChatModeCache;
+  proactiveCorrelations: ProactiveCorrelationStore;
+  correlatedReplies: Map<string, ProactiveCorrelationRecord>;
+  getRuntimeServicesContext: () => Promise<RuntimeServicesPortContext | undefined>;
 }
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
@@ -487,6 +509,9 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     pending,
     controls,
     chatModeCache,
+    proactiveCorrelations,
+    correlatedReplies,
+    getRuntimeServicesContext,
   } = deps;
   const normalizedContent = normalizeFeishuCommandContent(deps.msg.content);
   const msg = normalizedContent === deps.msg.content
@@ -504,7 +529,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
   const chatMode = await chatModeCache.resolve(channel, msg.chatId);
-  const scope = chatMode === 'topic' && msg.threadId
+  let scope = chatMode === 'topic' && msg.threadId
     ? `${msg.chatId}:${msg.threadId}`
     : msg.chatId;
   log.info('intake', 'enter', {
@@ -539,6 +564,22 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     return;
   }
 
+  const replyResolution = await resolveProactiveReply({
+    channel,
+    msg,
+    cfg: controls.cfg,
+    sessions,
+    correlations: proactiveCorrelations,
+    getRuntimeServicesContext,
+  });
+  if (replyResolution.status === 'rejected') return;
+  const correlation = replyResolution.status === 'resolved'
+    ? replyResolution.correlation
+    : undefined;
+  if (correlation) {
+    scope = correlation.scope;
+    correlatedReplies.set(msg.messageId, correlation);
+  }
   // Group-mention policy. p2p is always unrestricted; in groups (regular and
   // topic) we drop messages that don't @bot when the user has opted into the
   // quiet-by-default behavior. Slash commands are NOT exempt — the user
@@ -549,6 +590,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     msg.chatType !== 'p2p' &&
     getRequireMentionInGroup(controls.cfg) &&
     !msg.mentionedBot
+    && !correlation
   ) {
     log.info('intake', 'skip-no-mention', { scope, chatType: msg.chatType });
     return;
@@ -569,6 +611,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     controls,
   });
   if (handled) {
+    correlatedReplies.delete(msg.messageId);
     const dropped = pending.cancel(scope);
     log.info('intake', 'command', { scope, droppedPending: dropped.length });
     return;
@@ -595,6 +638,8 @@ interface RunBatchDeps {
   getRuntimeServicesContext: () => Promise<RuntimeServicesPortContext | undefined>;
   getStatelessIntentJudge: () => Promise<StatelessIntentJudge | undefined>;
   gatewayModeDegradeNotices: Set<string>;
+  proactiveCorrelations: ProactiveCorrelationStore;
+  correlatedReplies: Map<string, ProactiveCorrelationRecord>;
 }
 
 async function settleApprovalCard(
@@ -602,10 +647,15 @@ async function settleApprovalCard(
   messageId: string,
   approval: PendingApproval,
   action: ApprovalDecisionAction,
+  identity: InteractionSessionIdentity,
 ): Promise<void> {
   if (!isManaged(messageId)) return;
   try {
-    await updateManagedCard(channel, messageId, taskApprovalDecisionCard(approval, action));
+    await updateManagedCard(
+      channel,
+      messageId,
+      appendSessionIdentityCard(taskApprovalDecisionCard(approval, action), identity),
+    );
   } catch (err) {
     log.warn('approval', 'card-update-failed', {
       approvalId: approval.id,
@@ -633,11 +683,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     getRuntimeServicesContext,
     getStatelessIntentJudge,
     gatewayModeDegradeNotices,
+    proactiveCorrelations,
+    correlatedReplies,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
   const lastMsg = batch[batch.length - 1];
   if (!firstMsg || !lastMsg) return;
+  const replyCorrelation = [...batch]
+    .reverse()
+    .map((message) => correlatedReplies.get(message.messageId))
+    .find((record): record is ProactiveCorrelationRecord => Boolean(record));
+  for (const message of batch) correlatedReplies.delete(message.messageId);
 
   const chatId = firstMsg.chatId;
   const threadId = firstMsg.threadId;
@@ -653,7 +710,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     botOpenId: channel.botIdentity?.openId,
   });
 
-  let prompt: string;
+  let promptEnvelope: AgentPromptEnvelope;
   let cwd: string;
   let resumeFrom: string | undefined;
   let taskText: string;
@@ -664,6 +721,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   let answerCardPresentationUserText = '';
   let agentProfileId: string | undefined;
   let agentRuntimeSessionKey = agent.id;
+  let activeDomainSessionId = replyCorrelation?.sessionId;
+  let confirmedDomainSessionId: string | undefined;
+  let continuationCorrelationId = replyCorrelation?.correlationId;
+  let continuationSessionId = replyCorrelation?.sessionId;
+  let resumeAuditSettled = false;
+  const currentSessionIdentity = (): InteractionSessionIdentity => {
+    const task = taskStatus.snapshot(scope);
+    return {
+      bridge: scope,
+      domain: activeDomainSessionId ?? sessions.getRaw(scope)?.sessionId ?? resumeFrom,
+      ...(task?.startedAt !== undefined ? { elapsedMs: task.elapsedMs } : {}),
+    };
+  };
+  const markdownWithSessionIdentity = (body: string): string =>
+    appendSessionIdentityMarkdown(body, currentSessionIdentity());
+  const cardWithSessionIdentity = (card: object): object =>
+    appendSessionIdentityCard(card, currentSessionIdentity());
   let runtimeServicesContextForTurn: RuntimeServicesPortContext | undefined;
   let runtimeServicesContextLoaded = false;
   const getRuntimeServicesContextForTurn = async (): Promise<RuntimeServicesPortContext | undefined> => {
@@ -672,6 +746,46 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       runtimeServicesContextLoaded = true;
     }
     return runtimeServicesContextForTurn;
+  };
+  const appendProactiveReplyAudit = async (
+    type: 'reply_rejected' | 'reply_consumed' | 'resume_succeeded' | 'resume_failed',
+    correlationId: string,
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    const actionLog = new ProactiveActionLog({
+      context: await getRuntimeServicesContextForTurn(),
+      config: controls.cfg,
+    });
+    await actionLog.append({ type, correlationId, data });
+  };
+  const consumeReplyCorrelation = async (
+    correlation: ProactiveCorrelationRecord,
+    data: Record<string, unknown> = {},
+  ): Promise<void> => {
+    await appendProactiveReplyAudit('reply_consumed', correlation.correlationId, {
+      replyMessageId: lastMsg.messageId,
+      carrierMessageId: correlation.carrierMessageId,
+      scope: correlation.scope,
+      sessionId: correlation.sessionId,
+      ...data,
+    });
+    await proactiveCorrelations.markReplyConsumed(
+      correlation.correlationId,
+      lastMsg.messageId,
+    );
+  };
+  const settleResumeAudit = async (
+    type: 'resume_succeeded' | 'resume_failed',
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    if (!continuationCorrelationId || !continuationSessionId || resumeAuditSettled) return;
+    await appendProactiveReplyAudit(type, continuationCorrelationId, {
+      scope,
+      sessionId: continuationSessionId,
+      observedSessionId: confirmedDomainSessionId,
+      ...data,
+    });
+    resumeAuditSettled = true;
   };
   const turnTraceEnabled = getTurnTraceEnabled(controls.cfg);
   const traceRuntimeContext = turnTraceEnabled
@@ -739,6 +853,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       reason: gatewayModeResolution.reason ?? 'Runtime Services adapter resources are unavailable',
       sendOpts,
       notices: gatewayModeDegradeNotices,
+      identity: currentSessionIdentity(),
     });
   }
   const gatewayMode = gatewayModeResolution.mode;
@@ -756,6 +871,41 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   if (decision) {
     const pendingApproval = approvals.get(decision.approvalId);
     const approvalInScope = pendingApproval?.scope === scope ? pendingApproval : undefined;
+    if (
+      decision.action === 'execute'
+      && approvalInScope
+      && (
+        approvalInScope.gatewayMode !== gatewayMode
+        || approvalInScope.contextVersion !== sessionContextVersion
+      )
+    ) {
+      approvals.cancel(decision.approvalId);
+      taskStatus.finish(scope, 'cancelled');
+      turnTrace.record('approval_context_changed', {
+        approvalId: decision.approvalId,
+        approvalGatewayMode: approvalInScope.gatewayMode,
+        currentGatewayMode: gatewayMode,
+        approvalContextVersion: approvalInScope.contextVersion,
+        currentContextVersion: sessionContextVersion,
+      });
+      await settleApprovalCard(
+        channel,
+        lastMsg.messageId,
+        approvalInScope,
+        'cancel',
+        currentSessionIdentity(),
+      );
+      await sendReplyMarkdown(
+        channel,
+        chatId,
+        markdownWithSessionIdentity(
+          '审批对应的执行上下文已变化，原审批已失效。请重新发送任务。',
+        ),
+        sendOpts,
+      );
+      await flushTurnTrace();
+      return;
+    }
     const approval = decision.action === 'execute'
       ? approvalInScope && approvals.consume(decision.approvalId)
       : approvalInScope;
@@ -765,11 +915,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         action: decision.action,
         scopeMatch: Boolean(approvalInScope),
       });
-      await sendReplyMarkdown(channel, chatId, '这张审批卡片已过期或已处理。', sendOpts);
+      await sendReplyMarkdown(
+        channel,
+        chatId,
+        markdownWithSessionIdentity('这张审批卡片已过期或已处理。'),
+        sendOpts,
+      );
       await flushTurnTrace();
       return;
     }
-    await settleApprovalCard(channel, lastMsg.messageId, approval, decision.action);
+    await settleApprovalCard(
+      channel,
+      lastMsg.messageId,
+      approval,
+      decision.action,
+      currentSessionIdentity(),
+    );
     if (decision.action === 'modify') {
       approvals.cancel(decision.approvalId);
       taskStatus.finish(scope, 'cancelled');
@@ -780,7 +941,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await sendReplyMarkdown(
         channel,
         chatId,
-        '已取消原审批。请直接发送修改后的任务内容，我会重新生成执行审批卡片。',
+        markdownWithSessionIdentity(
+          '已取消原审批。请直接发送修改后的任务内容，我会重新生成执行审批卡片。',
+        ),
         sendOpts,
       );
       await flushTurnTrace();
@@ -793,17 +956,24 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         approvalId: decision.approvalId,
         action: decision.action,
       });
-      await sendReplyMarkdown(channel, chatId, '已停止，未执行 Codex。', sendOpts);
+      await sendReplyMarkdown(
+        channel,
+        chatId,
+        markdownWithSessionIdentity('已停止，未执行 Codex。'),
+        sendOpts,
+      );
       await flushTurnTrace();
       return;
     }
-    prompt = approval.prompt;
+    promptEnvelope = approval.promptEnvelope;
     cwd = approval.cwd;
     resumeFrom = approval.sessionId;
     taskText = approval.task;
     model = approval.model;
     replyModeOverride = approval.replyMode;
     agentProfileId = approval.agentProfileId ?? getAgentEndpointProfileId(controls.cfg);
+    continuationCorrelationId = approval.proactiveCorrelationId;
+    continuationSessionId = approval.proactiveSessionId;
     log.info('approval', 'execute', { scope, approvalId: approval.id });
     turnTrace.record('approval_execute', {
       approvalId: approval.id,
@@ -857,24 +1027,21 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       intentJudge: relayMode ? undefined : await getStatelessIntentJudge(),
       replyMentionTargets: getReplyMentionTargets(controls.cfg),
     });
-    prompt = promptPlan.prompt;
+    promptEnvelope = promptPlan.envelope;
     taskText = policy.taskText || summarizeTask(batch);
     model = policy.model;
     const intentReplyMode = relayMode
       ? undefined
-      : replyModeForInteractionIntent({
-          intent: promptPlan.intent,
-          userText: promptPlan.userText,
-        });
+      : replyModeForPresentationPlan(promptPlan.presentationPlan);
     replyModeOverride =
       policy.replyMode ??
       intentReplyMode;
     answerCardPresentationRequested =
       !policy.replyMode &&
       intentReplyMode === 'card' &&
-      promptPlan.intent.presentation?.representation === 'interactive_card';
+      promptPlan.presentationPlan?.representation === 'interactive_card';
     answerCardPresentationMode =
-      promptPlan.intent.presentation?.source === 'dynamic_ui_heuristic' ? 'dynamic_ui' : 'default';
+      promptPlan.presentationPlan?.source === 'dynamic_ui_heuristic' ? 'dynamic_ui' : 'default';
     answerCardPresentationUserText = promptPlan.userText;
     if (replyModeOverride && !policy.replyMode) {
       log.info('presentation', 'reply-mode-hint', {
@@ -883,17 +1050,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         mode: replyModeOverride,
       });
     }
-    agentProfileId = getAgentEndpointProfileId(controls.cfg);
-    log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
+    agentProfileId = replyCorrelation?.endpointProfileId ?? getAgentEndpointProfileId(controls.cfg);
+    log.info('prompt', 'built', {
+      promptSections: promptEnvelope.sections.map((section) => section.kind),
+      quotes: quotes.length,
+    });
 
-    const requestedCwd = workspaces.cwdFor(scope) ?? defaultAgentTaskCwd({ agent, cfg: controls.cfg });
+    const requestedCwd = replyCorrelation?.cwd
+      ?? workspaces.cwdFor(scope)
+      ?? defaultAgentTaskCwd({ agent, cfg: controls.cfg });
     const cwdPlan = await prepareAgentProfileRunPlan({
       profileId: agentProfileId,
       runtimeHome: paths.appDir,
       scope,
       agentRuntimeId: agent.id,
       run: {
-        prompt,
+        prompt: '',
         cwd: requestedCwd,
         model,
         stopGraceMs: getAgentStopGraceMs(controls.cfg),
@@ -909,12 +1081,44 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         notes: cwdPlan.notes,
       });
     }
-    resumeFrom = sessions.resumeFor(
+    const resumableSession = sessions.resumeFor(
       scope,
       cwd,
       agentRuntimeSessionKey,
       sessionContextVersion,
     );
+    if (replyCorrelation && (
+      agentProfileId !== replyCorrelation.endpointProfileId
+      || agentRuntimeSessionKey !== replyCorrelation.agentRuntimeId
+      || cwd !== replyCorrelation.cwd
+      || sessionContextVersion !== replyCorrelation.contextVersion
+      || resumableSession !== replyCorrelation.sessionId
+    )) {
+      log.warn('correlation', 'run-policy-rejected', {
+        correlationId: replyCorrelation.correlationId,
+        scope,
+        agentProfileId,
+        agentRuntimeId: agentRuntimeSessionKey,
+      });
+      await appendProactiveReplyAudit('reply_rejected', replyCorrelation.correlationId, {
+        reason: 'run_policy_mismatch',
+        stage: 'initial_run_policy',
+        replyMessageId: lastMsg.messageId,
+        scope,
+        sessionId: replyCorrelation.sessionId,
+      });
+      await sendReplyMarkdown(
+        channel,
+        chatId,
+        markdownWithSessionIdentity(
+          '主动消息对应的执行边界已变化，未恢复原会话。请重新发送任务。',
+        ),
+        sendOpts,
+      );
+      await flushTurnTrace();
+      return;
+    }
+    resumeFrom = replyCorrelation?.sessionId ?? resumableSession;
     if (resumeFrom) {
       log.info('session', 'resume', {
         sessionId: resumeFrom,
@@ -944,7 +1148,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
     turnTrace.record('turn_planned', {
       taskText,
-      promptChars: prompt.length,
+      promptSections: promptEnvelope.sections.map((section) => section.kind),
       cwd,
       model: model ?? null,
       agentProfileId,
@@ -961,13 +1165,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       chatId,
       messageId: lastMsg.messageId,
       threadId,
-      prompt,
+      promptEnvelope,
       task: taskText,
       cwd,
       sessionId: resumeFrom,
       model,
       replyMode: replyModeOverride,
       agentProfileId,
+      gatewayMode,
+      contextVersion: sessionContextVersion,
+      proactiveCorrelationId: replyCorrelation?.correlationId,
+      proactiveSessionId: replyCorrelation?.sessionId,
     });
 
     // 是否需要审批由策略统一决定：命令前缀、模型、配置都在 decideRunPolicy 中处理。
@@ -977,8 +1185,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       approvals.cancel(approval.id);
       log.info('approval', 'skipped', { scope, reason: 'auto-run', policy: policy.source });
     } else {
+      if (replyCorrelation) {
+        await consumeReplyCorrelation(replyCorrelation, {
+          outcome: 'approval_required',
+          approvalId: approval.id,
+        });
+      }
       taskStatus.markPending(scope, { task: taskText, cwd });
-      await sendManagedCard(channel, chatId, taskApprovalCard(approval), lastMsg.messageId);
+      await sendManagedCard(
+        channel,
+        chatId,
+        cardWithSessionIdentity(taskApprovalCard(approval)),
+        lastMsg.messageId,
+      );
       log.info('approval', 'created', { scope, approvalId: approval.id });
       turnTrace.record('approval_required', {
         approvalId: approval.id,
@@ -990,15 +1209,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
+  const renderedPrompt = renderAgentPrompt(promptEnvelope);
   const runPlan = await prepareAgentProfileRunPlan({
     profileId: agentProfileId,
     runtimeHome: paths.appDir,
     scope,
     agentRuntimeId: agent.id,
     run: {
-      prompt: relayMode
-        ? withRelayPlainTextTemplate(prompt, { channel: 'feishu' })
-        : withInteractionProtocol(prompt, { channel: 'feishu' }),
+      prompt: renderedPrompt,
       sessionId: resumeFrom,
       cwd,
       model,
@@ -1016,6 +1234,35 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
   cwd = runPlan.run.cwd ?? cwd;
   resumeFrom = runPlan.run.sessionId;
+  if (replyCorrelation && (
+    runPlan.profile.id !== replyCorrelation.endpointProfileId
+    || runPlan.agentRuntimeId !== replyCorrelation.agentRuntimeId
+    || cwd !== replyCorrelation.cwd
+    || sessionContextVersion !== replyCorrelation.contextVersion
+    || resumeFrom !== replyCorrelation.sessionId
+  )) {
+    log.warn('correlation', 'final-run-policy-rejected', {
+      correlationId: replyCorrelation.correlationId,
+      scope,
+    });
+    await appendProactiveReplyAudit('reply_rejected', replyCorrelation.correlationId, {
+      reason: 'run_policy_mismatch',
+      stage: 'final_run_policy',
+      replyMessageId: lastMsg.messageId,
+      scope,
+      sessionId: replyCorrelation.sessionId,
+    });
+    await sendReplyMarkdown(
+      channel,
+      chatId,
+      markdownWithSessionIdentity(
+        '主动消息对应的执行边界已变化，未恢复原会话。请重新发送任务。',
+      ),
+      sendOpts,
+    );
+    await flushTurnTrace();
+    return;
+  }
   turnTrace.record('run_planned', {
     promptChars: runPlan.run.prompt.length,
     cwd,
@@ -1028,6 +1275,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     stopGraceMs: runPlan.run.stopGraceMs ?? null,
   });
 
+  if (replyCorrelation) {
+    await consumeReplyCorrelation(replyCorrelation, { outcome: 'run_start' });
+  }
   const run = agent.run(runPlan.run);
   const handle = activeRuns.register(scope, run);
   taskStatus.markRunning(scope, { task: taskText, cwd, pid: run.pid });
@@ -1119,22 +1369,110 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     );
     return feishuDeliverySupportOptions;
   };
-  const deliverSignal = async (signal: AgentSignal): Promise<void> => {
+  const deliverSignal = async (
+    signal: AgentSignal,
+    options: { proactive?: boolean } = {},
+  ): Promise<void> => {
+    let deliverySignal = signal;
+    let proactiveContext: {
+      correlation: ProactiveCorrelationRecord;
+      actionLog: ProactiveActionLog;
+    } | undefined;
+    if (options.proactive) {
+      const signalId = signal.id;
+      const sessionId = activeDomainSessionId
+        ?? sessions.getRaw(scope)?.sessionId
+        ?? resumeFrom;
+      if (!signalId || !sessionId || !agentProfileId) {
+        throw new Error('Proactive AgentSignal requires stable id, session, and endpoint profile');
+      }
+      const reservation = await proactiveCorrelations.reserve({
+        signalId,
+        signalKind: deliverySignal.kind,
+        chatId,
+        scope,
+        sessionId,
+        agentRuntimeId: agentRuntimeSessionKey,
+        endpointProfileId: agentProfileId,
+        cwd,
+        contextVersion: sessionContextVersion,
+        originMessageId: lastMsg.messageId,
+      });
+      if (reservation.duplicate) {
+        log.info('correlation', 'signal-deduplicated', {
+          correlationId: reservation.record.correlationId,
+          signalId,
+          status: reservation.record.status,
+        });
+        return;
+      }
+      const actionLog = new ProactiveActionLog({
+        context: await getRuntimeServicesContextForTurn(),
+        config: controls.cfg,
+      });
+      try {
+        deliverySignal = await bindProactiveSignalToRun(signal, { cwd });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await proactiveCorrelations.markFailed(
+          reservation.record.correlationId,
+          'policy_rejected',
+          reason,
+        ).catch(() => undefined);
+        await actionLog.append({
+          type: 'outbound_intent_rejected',
+          correlationId: reservation.record.correlationId,
+          data: {
+            signalId,
+            signalKind: signal.kind,
+            reason,
+            endpointProfileId: agentProfileId,
+          },
+        });
+        throw error;
+      }
+      try {
+        await actionLog.append({
+          type: 'outbound_intent_accepted',
+          correlationId: reservation.record.correlationId,
+          data: {
+            signalId,
+            signalKind: deliverySignal.kind,
+            chatId,
+            scope,
+            sessionId,
+            agentRuntimeId: agentRuntimeSessionKey,
+            endpointProfileId: agentProfileId,
+          },
+        });
+      } catch (error) {
+        await proactiveCorrelations.markFailed(
+          reservation.record.correlationId,
+          'audit_failed',
+          error instanceof Error ? error.message : String(error),
+        ).catch(() => undefined);
+        throw error;
+      }
+      proactiveContext = {
+        correlation: reservation.record,
+        actionLog,
+      };
+    }
     const rendered: FeishuRenderedSignalWithSupport = relayMode
-      ? renderFeishuSignal(signal)
-      : await applyFeishuDeliverySupport(renderFeishuSignal(signal), {
+      ? renderFeishuSignal(deliverySignal)
+      : await applyFeishuDeliverySupport(renderFeishuSignal(deliverySignal), {
           ...(await getFeishuDeliverySupportOptions()),
           onError: (err) => {
             log.warn('signal', 'delivery-support-failed', {
               scope,
-              kind: signal.kind,
+              kind: deliverySignal.kind,
               err: err instanceof Error ? err.message : String(err),
             });
           },
         });
     log.info('signal', 'deliver', {
       scope,
-      kind: signal.kind,
+      kind: deliverySignal.kind,
       representation: rendered.plan.representation.id,
       carrier: rendered.plan.carrier.id,
       support: rendered.supportOutcome?.status,
@@ -1142,30 +1480,103 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         ? rendered.supportOutcome.usedResourceId
         : undefined,
     });
-    await sendFeishuSignalInputs(
-      {
-        async send(to, input, options) {
-          if ('markdown' in input) {
-            return sendReplyMarkdown(channel, to, input.markdown, options ?? {});
-          }
-          const { mentions: _mentions, ...sendOptions } = options ?? {};
-          return channel.send(to, input, sendOptions);
-        },
-      },
-      chatId,
-      feishuSendInputsForRenderedSignal(rendered),
-      sendOpts,
-      (err, input) => {
-        log.warn('signal', 'support-payload-send-failed', {
-          scope,
-          kind: signal.kind,
-          payload: Object.keys(input)[0] ?? 'unknown',
-          err: err instanceof Error ? err.message : String(err),
-        });
-      },
+    const signalInputs = feishuSendInputsForRenderedSignal(rendered).map((input, index) =>
+      index === 0
+        ? appendSessionIdentityToFeishuInput(input, currentSessionIdentity())
+        : input,
     );
-    if (shouldNotifyMac(signal)) {
-      void sendMacNotification(signal).catch((err) => {
+    let deliveryResult: Awaited<ReturnType<typeof sendFeishuSignalInputs>>;
+    try {
+      deliveryResult = await sendFeishuSignalInputs(
+        {
+          async send(to, input, options) {
+            if ('markdown' in input) {
+              return sendReplyMarkdown(channel, to, input.markdown, options ?? {});
+            }
+            const { mentions: _mentions, ...sendOptions } = options ?? {};
+            return channel.send(to, input, sendOptions);
+          },
+        },
+        chatId,
+        signalInputs,
+        sendOpts,
+        (err, input) => {
+          log.warn('signal', 'support-payload-send-failed', {
+            scope,
+            kind: deliverySignal.kind,
+            payload: Object.keys(input)[0] ?? 'unknown',
+            err: err instanceof Error ? err.message : String(err),
+          });
+        },
+      );
+    } catch (error) {
+      if (proactiveContext) {
+        await proactiveCorrelations.markFailed(
+          proactiveContext.correlation.correlationId,
+          'delivery_failed',
+          error instanceof Error ? error.message : String(error),
+        ).catch(() => undefined);
+        await proactiveContext.actionLog.append({
+          type: 'delivery_failed',
+          correlationId: proactiveContext.correlation.correlationId,
+          data: {
+            signalId: signal.id,
+            signalKind: deliverySignal.kind,
+            reason: error instanceof Error ? error.message : String(error),
+          },
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (proactiveContext) {
+      const messageId = deliveryResult.messageId;
+      if (!messageId) {
+        const reason = 'Feishu carrier returned no primary message id';
+        await proactiveCorrelations.markFailed(
+          proactiveContext.correlation.correlationId,
+          'delivery_unknown',
+          reason,
+        );
+        await proactiveContext.actionLog.append({
+          type: 'delivery_failed',
+          correlationId: proactiveContext.correlation.correlationId,
+          data: {
+            signalId: signal.id,
+            signalKind: deliverySignal.kind,
+            reason,
+            deliveryState: 'unknown',
+          },
+        });
+        throw new Error(reason);
+      }
+      try {
+        await proactiveContext.actionLog.append({
+          type: 'delivery_succeeded',
+          correlationId: proactiveContext.correlation.correlationId,
+          data: {
+            signalId: signal.id,
+            signalKind: deliverySignal.kind,
+            carrierMessageId: messageId,
+            chatId,
+            scope,
+            sessionId: proactiveContext.correlation.sessionId,
+          },
+        });
+      } catch (error) {
+        await proactiveCorrelations.markFailed(
+          proactiveContext.correlation.correlationId,
+          'audit_failed',
+          error instanceof Error ? error.message : String(error),
+        ).catch(() => undefined);
+        throw error;
+      }
+      await proactiveCorrelations.markDelivered(
+        proactiveContext.correlation.correlationId,
+        messageId,
+      );
+    }
+    if (shouldNotifyMac(deliverySignal)) {
+      void sendMacNotification(deliverySignal).catch((err) => {
         log.warn('signal', 'mac-notify-failed', {
           scope,
           err: err instanceof Error ? err.message : String(err),
@@ -1189,7 +1600,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       idleTimeoutMs,
       onState,
       {
-        onSignal: async (signal) => {
+        onSession: (sessionId) => {
+          activeDomainSessionId = sessionId;
+          confirmedDomainSessionId = sessionId;
+        },
+        onSignal: async (signal, source) => {
           signalTimeline.append(scope, signal);
           log.info('signal', 'record', { scope, kind: signal.kind, title: signal.title });
           turnTrace.record('signal_recorded', {
@@ -1197,7 +1612,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             title: signal.title,
             severity: signal.severity,
           });
-          await deliverSignal(signal);
+          await deliverSignal(signal, { proactive: source === 'endpoint' });
         },
         onInteraction: async (request) => {
           const signal = interactionRequestToSignal(request);
@@ -1206,7 +1621,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             id: request.id,
             kind: request.kind,
           });
-          await deliverSignal(signal);
+          await deliverSignal(signal, { proactive: true });
         },
       },
     );
@@ -1219,15 +1634,46 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     const runStreaming = async (
       onState: (state: RunState) => Promise<void>,
     ): Promise<void> => {
-      finalState = await runOnceWithStream(handle, onState);
+      try {
+        finalState = await runOnceWithStream(handle, onState);
+      } catch (error) {
+        if (resumedThisTry && continuationCorrelationId && continuationSessionId) {
+          const sessionConfirmed = confirmedDomainSessionId === continuationSessionId;
+          await settleResumeAudit(sessionConfirmed ? 'resume_succeeded' : 'resume_failed', {
+            terminal: 'stream_error',
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+        throw error;
+      }
 
-      if (isResumeFailureWithoutOutput(finalState, resumedThisTry)) {
+      const resumeFailed = isResumeFailureWithoutOutput(finalState, resumedThisTry);
+      if (resumedThisTry && continuationCorrelationId && continuationSessionId) {
+        const sessionConfirmed = confirmedDomainSessionId === continuationSessionId;
+        await settleResumeAudit(
+          resumeFailed || !sessionConfirmed ? 'resume_failed' : 'resume_succeeded',
+          {
+            terminal: finalState.terminal,
+            ...(resumeFailed
+              ? { reason: finalState.errorMsg ?? 'resume_failed_without_output' }
+              : !sessionConfirmed
+                ? { reason: confirmedDomainSessionId ? 'session_mismatch' : 'session_not_confirmed' }
+                : {}),
+          },
+        );
+      }
+
+      if (resumeFailed) {
+        const failedResumeSessionId = resumeFrom;
         log.warn('agent', 'resume-failed-fallback', {
           scope,
-          previousSessionId: resumeFrom,
+          previousSessionId: failedResumeSessionId,
           reason: finalState.errorMsg,
         });
         sessions.clear(scope);
+        resumeFrom = undefined;
+        activeDomainSessionId = undefined;
+        confirmedDomainSessionId = undefined;
         activeRuns.unregister(scope, run);
         // 用全新会话再跑一次。
         const fallbackPlan = await prepareAgentProfileRunPlan({
@@ -1252,7 +1698,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           pid: fallback.pid,
         });
         turnTrace.record('run_retry_without_resume', {
-          previousSessionId: resumeFrom ?? null,
+          previousSessionId: failedResumeSessionId ?? null,
           reason: finalState.errorMsg ?? null,
           pid: fallback.pid,
         });
@@ -1267,31 +1713,31 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         {
           card: {
-            initial: renderCard(initialState),
+            initial: cardWithSessionIdentity(renderCard(initialState)),
             producer: async (ctrl) => {
               await runStreaming(async (state) => {
                 const visible = filterForPrefs(state);
                 taskStatus.updateFromRunState(scope, visible);
                 await ctrl.update(
-                  answerCardPresentationRequested && visible.terminal !== 'running'
+                  cardWithSessionIdentity(answerCardPresentationRequested && visible.terminal !== 'running'
                     ? renderPresentationCard(
                         presentAnswerCard(visible, {
                           mode: answerCardPresentationMode,
                           userText: answerCardPresentationUserText,
                         }),
                       )
-                    : renderCard(visible),
+                    : renderCard(visible)),
                 );
               });
               finishRun(finalState);
               if (answerCardPresentationRequested) {
                 await ctrl.update(
-                  renderPresentationCard(
+                  cardWithSessionIdentity(renderPresentationCard(
                     presentAnswerCard(filterForPrefs(finalState), {
                       mode: answerCardPresentationMode,
                       userText: answerCardPresentationUserText,
                     }),
-                  ),
+                  )),
                 );
               }
             },
@@ -1307,11 +1753,15 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             await runStreaming(async (state) => {
               const visible = filterForPrefs(state);
               taskStatus.updateFromRunState(scope, visible);
-              await ctrl.setContent(formatFeishuFinalMarkdown(renderText(visible)));
+              await ctrl.setContent(markdownWithSessionIdentity(
+                formatFeishuFinalMarkdown(renderText(visible)),
+              ));
             });
             finishRun(finalState);
             const visibleFinalState = filterForPrefs(finalState);
-            const renderedText = formatFeishuFinalMarkdown(renderText(visibleFinalState));
+            const renderedText = markdownWithSessionIdentity(
+              formatFeishuFinalMarkdown(renderText(visibleFinalState)),
+            );
             await persistFeishuReplyDebug({
               appDir: paths.appDir,
               scope,
@@ -1335,7 +1785,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       });
       finishRun(finalState);
       const visibleFinalState = filterForPrefs(finalState);
-      const body = formatFeishuFinalMarkdown(renderText(visibleFinalState));
+      const body = markdownWithSessionIdentity(
+        formatFeishuFinalMarkdown(renderText(visibleFinalState)),
+      );
       if (body.trim()) {
         const finalSendOpts = withReplyMentions({
           sendOpts,
@@ -1406,203 +1858,6 @@ async function persistFeishuReplyDebug(input: {
   }
 }
 
-/**
- * Drive the agent's event stream into a stateful RunState, calling `flush`
- * on every state transition. Used by both card and markdown reply modes —
- * the only difference between the two is what `flush` does with the state.
- */
-async function processAgentStream(
-  handle: RunHandle,
-  sessions: SessionStore,
-  scope: string,
-  cwd: string,
-  agentRuntimeId: string,
-  sessionContextVersion: string,
-  idleTimeoutMs: number | undefined,
-  flush: (state: RunState) => Promise<void>,
-  options: {
-    onInteraction?: (request: InteractionRequest) => Promise<void>;
-    onSignal?: (signal: AgentSignal) => Promise<void>;
-  } = {},
-): Promise<RunState> {
-  let state: RunState = initialState;
-
-  // Idle watchdog: Codex going silent for `idleTimeoutMs` is treated as
-  // "presumed hung", we stop() and surface a timeout marker on the card.
-  //
-  // BUT — Codex can legitimately be silent for a long time when it's
-  // waiting on a long-running tool call (e.g. `lark-cli` printing an
-  // OAuth URL and blocking until the user clicks authorize). In that
-  // case there's no event stream activity from Codex itself, only the
-  // tool subprocess running. We track which tool_use ids haven't matched
-  // a tool_result yet, and pause the watchdog whenever the set is
-  // non-empty.
-  //
-  // The watchdog re-arms when:
-  //  - a tool_result drains the in-flight set to zero, OR
-  //  - any non-tool event arrives while the set is empty.
-  let idleFired = false;
-  let timer: NodeJS.Timeout | undefined;
-  const inFlightTools = new Map<string, { name: string; input: unknown }>();
-  const sentInteractions = new Set<string>();
-  const emitInteraction = async (request: InteractionRequest): Promise<void> => {
-    if (!options.onInteraction || sentInteractions.has(request.id)) return;
-    sentInteractions.add(request.id);
-    await options.onInteraction(request);
-  };
-  const armOrPauseIdle = (): void => {
-    if (!idleTimeoutMs) return;
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-    if (inFlightTools.size > 0) return;
-    timer = setTimeout(() => {
-      idleFired = true;
-      handle.interrupted = true;
-      log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs });
-      void handle.run.stop().catch(() => {
-        /* stop errors are non-fatal */
-      });
-    }, idleTimeoutMs);
-  };
-  armOrPauseIdle();
-
-  try {
-    for await (const evt of handle.run.events) {
-      if (handle.interrupted) break;
-
-      // Track tool flight before re-arming the idle timer so the arm step
-      // sees the correct set size. tool_use opens a window; tool_result
-      // closes it. Other event types are bookkept after the if/else.
-      let effectiveEvt = evt;
-
-      if (effectiveEvt.type === 'tool_use') {
-        const risk = assessToolRisk(effectiveEvt.name, effectiveEvt.input);
-        if (risk) {
-          log.warn('agent', 'tool-risk', {
-            scope,
-            tool: effectiveEvt.name,
-            risk: risk.risk,
-          });
-          await emitInteraction(risk);
-        }
-      }
-
-      if (effectiveEvt.type === 'text') {
-        for (const req of extractInteractionRequests(effectiveEvt.delta)) {
-          log.info('interaction', 'request', { scope, id: req.id, kind: req.kind });
-          await emitInteraction(req);
-        }
-        const visible = stripInteractionBlocks(effectiveEvt.delta);
-        if (!visible) continue;
-        effectiveEvt = { ...effectiveEvt, delta: visible };
-      } else if (effectiveEvt.type === 'text_replace') {
-        for (const req of extractInteractionRequests(effectiveEvt.text)) {
-          log.info('interaction', 'request', { scope, id: req.id, kind: req.kind });
-          await emitInteraction(req);
-        }
-        const visible = stripInteractionBlocks(effectiveEvt.text);
-        if (!visible) continue;
-        effectiveEvt = { ...effectiveEvt, text: visible };
-      }
-
-      if (effectiveEvt.type === 'tool_use') {
-        inFlightTools.set(effectiveEvt.id, {
-          name: effectiveEvt.name,
-          input: effectiveEvt.input,
-        });
-        log.info('agent', 'tool-in-flight', {
-          tool: effectiveEvt.name,
-          inFlight: inFlightTools.size,
-        });
-      } else if (effectiveEvt.type === 'tool_result') {
-        const tool = inFlightTools.get(effectiveEvt.id);
-        if (tool && options.onSignal) {
-          const signals = extractToolResultSignals({
-            id: effectiveEvt.id,
-            name: tool.name,
-            input: tool.input,
-            output: effectiveEvt.output,
-            isError: effectiveEvt.isError,
-          });
-          for (const signal of signals) {
-            await options.onSignal(signal);
-          }
-        }
-        inFlightTools.delete(effectiveEvt.id);
-        log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
-      }
-      armOrPauseIdle();
-
-      if (effectiveEvt.type === 'system') {
-        if (effectiveEvt.sessionId) {
-          const effectiveCwd = effectiveEvt.cwd ?? cwd;
-          sessions.set(
-            scope,
-            effectiveEvt.sessionId,
-            effectiveCwd,
-            agentRuntimeId,
-            sessionContextVersion,
-          );
-          log.info('session', 'set', { sessionId: effectiveEvt.sessionId });
-        }
-        continue;
-      }
-      if (effectiveEvt.type === 'usage') {
-        if (effectiveEvt.costUsd !== undefined) {
-          log.info('agent', 'usage', { costUsd: Number(effectiveEvt.costUsd.toFixed(4)) });
-        }
-        continue;
-      }
-
-      const prevTerminal = state.terminal;
-      const prevFooter = state.footer;
-      state = reduce(state, effectiveEvt);
-      if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
-        log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
-      }
-      await flush(state);
-      // Stop iterating as soon as we have a terminal state. Some Codex
-      // versions don't close stdout immediately after the result event, which
-      // would leave the for-await waiting forever otherwise.
-      if (state.terminal !== 'running') break;
-    }
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-
-  // If state already reached a terminal event (done/error/etc.) before the
-  // watchdog or interrupt could land, don't clobber it — that real terminal
-  // wins. This avoids "Codex finished but flush was slow → timer fired
-  // mid-flush → user sees 'idle_timeout' on a successful run".
-  if (state.terminal === 'running') {
-    if (idleFired) {
-      state = markIdleTimeout(state, Math.round(idleTimeoutMs! / 60_000));
-    } else if (handle.interrupted) {
-      state = markInterrupted(state);
-    } else {
-      state = finalizeIfRunning(state);
-    }
-  }
-  log.info('card', 'final', { terminal: state.terminal, interrupted: handle.interrupted });
-  await flush(state);
-    // Reap the subprocess. Two regimes:
-  //  - Interrupted (user /stop, idle watchdog, disconnect): stop() was already
-  //    fire-and-forgotten by whoever set handle.interrupted; this awaits it.
-  //  - Natural done: stream-json emits `result` ~1ms before Codex actually
-  //    closes stdout (telemetry flush). Wait it out so the run exits with
-  //    code 0; only SIGTERM as a hung-process safety net.
-  if (handle.interrupted) {
-    await handle.run.stop();
-  } else {
-    const exited = await handle.run.waitForExit(POST_DONE_EXIT_GRACE_MS);
-    if (!exited) {
-      log.warn('agent', 'post-done-timeout', { graceMs: POST_DONE_EXIT_GRACE_MS });
-      await handle.run.stop();
-    }
-  }
-  return state;
-}
-
 async function buildFeishuDeliverySupportOptions(
   cfg: AppConfig,
   getRuntimeServicesContext: () => Promise<RuntimeServicesPortContext | undefined> = () =>
@@ -1628,8 +1883,6 @@ async function buildFeishuDeliverySupportOptions(
  * second; 2s leaves headroom for slow flushes without making the user notice
  * a stall (the card has already rendered terminal state by this point).
  */
-const POST_DONE_EXIT_GRACE_MS = 2000;
-
 function lifecycleForTerminal(terminal: RunState['terminal']): Exclude<TaskLifecycle, 'pending_approval' | 'running'> {
   switch (terminal) {
     case 'interrupted':
@@ -1673,6 +1926,7 @@ async function notifyGatewayModeDegraded(input: {
   reason: string;
   sendOpts: SendOptions;
   notices: Set<string>;
+  identity: InteractionSessionIdentity;
 }): Promise<void> {
   const key = `${input.scope}:adapter-to-relay`;
   if (input.notices.has(key)) return;
@@ -1680,11 +1934,27 @@ async function notifyGatewayModeDegraded(input: {
   await sendReplyMarkdown(
     input.channel,
     input.chatId,
-    [
-      '当前会话 gatewayMode: adapter 已降级为 relay。',
-      `原因：${input.reason}。`,
-      'Runtime Services 资源可用后，可用 `/gatewayMode adapter` 切回。',
-    ].join('\n'),
+    appendSessionIdentityMarkdown(
+      [
+        '当前会话 gatewayMode: adapter 已降级为 relay。',
+        `原因：${input.reason}。`,
+        'Runtime Services 资源可用后，可用 `/gatewayMode adapter` 切回。',
+      ].join('\n'),
+      input.identity,
+    ),
     input.sendOpts,
   );
+}
+
+function appendSessionIdentityToFeishuInput(
+  input: FeishuSendInput,
+  identity: InteractionSessionIdentity,
+): FeishuSendInput {
+  if ('markdown' in input) {
+    return { markdown: appendSessionIdentityMarkdown(input.markdown, identity) };
+  }
+  if ('card' in input) {
+    return { card: appendSessionIdentityCard(input.card, identity) };
+  }
+  return input;
 }

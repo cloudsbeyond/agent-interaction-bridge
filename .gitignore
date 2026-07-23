@@ -12,6 +12,7 @@ coverage/
 .idea/
 .vscode/
 .alphaX/
+docs/superpowers/
 
 # Internal-only: dev smoke scripts and full changelog stay local, do not ship
 scripts/
@@ -24,6 +25,7 @@ config.json
 model-providers.json
 secrets.enc
 sessions.json
+proactive-correlations.json
 workspaces.json
 processes.json
 health/

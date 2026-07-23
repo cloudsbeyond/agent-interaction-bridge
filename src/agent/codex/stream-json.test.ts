@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { translateEvent } from './stream-json';
+import { encodeAgentSignalBlock } from '../../signal/protocol';
 
 function events(raw: unknown) {
   return [...translateEvent(raw)];
@@ -33,6 +34,25 @@ describe('translateEvent', () => {
         },
       }),
     ).toEqual([{ type: 'text', delta: 'pong' }]);
+  });
+
+  test('translates endpoint signal blocks to semantic events and hides the carrier block', () => {
+    const signal = {
+      id: 'status-1',
+      kind: 'status' as const,
+      title: 'Ready',
+      summary: 'Waiting for confirmation',
+    };
+    expect(events({
+      type: 'item.completed',
+      item: {
+        type: 'agent_message',
+        text: `Visible\n${encodeAgentSignalBlock(signal)}`,
+      },
+    })).toEqual([
+      { type: 'signal', signal },
+      { type: 'text', delta: 'Visible' },
+    ]);
   });
 
   test('emits command execution start as tool use', () => {

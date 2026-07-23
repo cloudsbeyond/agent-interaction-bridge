@@ -13,11 +13,7 @@ describe('bridge stateless intent judge', () => {
         target: 'previous_agent_output',
         confidence: 'high',
         requiresPriorContext: true,
-        presentation: {
-          representation: 'interactive_card',
-          source: 'explicit_user_feedback',
-        },
-        guidance: ['Rewrite the prior answer as card-ready compact blocks.'],
+        guidance: ['Treat this as prior-answer presentation feedback.'],
       });
     });
     const judge = createBridgeStatelessIntentJudge({ runtime: services });
@@ -33,13 +29,13 @@ describe('bridge stateless intent judge', () => {
       target: 'previous_agent_output',
       confidence: 'high',
       requiresPriorContext: true,
-      presentation: {
-        representation: 'interactive_card',
-      },
-      guidance: ['Rewrite the prior answer as card-ready compact blocks.'],
+      guidance: ['Treat this as prior-answer presentation feedback.'],
     });
+    expect(await judge.classify({ text: '信息密度太高，做成飞书卡片' }))
+      .not.toHaveProperty('presentation');
     expect(calls[0]).toContain('Authority boundary');
     expect(calls[0]).toContain('user_text: 信息密度太高，做成飞书卡片');
+    expect(calls[0]).not.toContain('presentation may be omitted');
   });
 
   test('returns undefined when Runtime Services returns invalid intent JSON', async () => {
@@ -50,7 +46,7 @@ describe('bridge stateless intent judge', () => {
     await expect(judge.classify({ text: '随便看看' })).resolves.toBeUndefined();
   });
 
-  test('accepts model-classified Dynamic UI task requests', async () => {
+  test('keeps model-classified task requests free of presentation routing', async () => {
     const calls: string[] = [];
     const judge = createBridgeStatelessIntentJudge({
       runtime: languageServices((input) => {
@@ -60,11 +56,7 @@ describe('bridge stateless intent judge', () => {
           target: 'current_message',
           confidence: 'medium',
           requiresPriorContext: false,
-          presentation: {
-            representation: 'interactive_card',
-            source: 'dynamic_ui_heuristic',
-          },
-          guidance: ['Use a compact visual/card-ready analytical structure.'],
+          guidance: [],
         });
       }),
     });
@@ -74,14 +66,10 @@ describe('bridge stateless intent judge', () => {
         text: '某产品指标趋势分析',
         channel: 'feishu',
       }),
-    ).resolves.toMatchObject({
-      kind: 'task_request',
-      presentation: {
-        representation: 'interactive_card',
-        source: 'dynamic_ui_heuristic',
-      },
-    });
-    expect(calls[0]).toContain('source dynamic_ui_heuristic');
+    ).resolves.toMatchObject({ kind: 'task_request' });
+    expect(await judge.classify({ text: '某产品指标趋势分析' }))
+      .not.toHaveProperty('presentation');
+    expect(calls[0]).not.toContain('dynamic_ui_heuristic');
   });
 });
 
