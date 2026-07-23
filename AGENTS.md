@@ -269,8 +269,9 @@ from surface, then adjust carrier rendering only if lowering still fails.
 ## Commands
 
 Setup: `pnpm install`
-Validate: `pnpm public-safety-check`, `pnpm test`, `pnpm typecheck`,
-`pnpm build`, `npm pack --dry-run`, `agent-interaction-bridge architecture check`,
+Validate: `pnpm public-safety-check`, `pnpm dependency-audit`, `pnpm test`, `pnpm test:coverage`,
+`pnpm typecheck`, `pnpm build`, `pnpm package-safety-check`,
+`npm pack --dry-run`, `agent-interaction-bridge architecture check`,
 `agent-interaction-bridge architecture contracts`
 Run: `node ./dist/cli.js start`
 Local install: `npm install -g .` then `agent-interaction-bridge start`

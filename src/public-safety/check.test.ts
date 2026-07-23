@@ -17,11 +17,16 @@ interface PublicSafetyModule {
     options?: { denylist?: Array<{ value: string; source?: string }> },
   ): PublicSafetyResult;
   formatPublicSafetyReport(result: PublicSafetyResult): string;
+  scanPackageSafetyFiles?: (
+    files: Array<{ path: string; content: string }>,
+    options?: { denylist?: Array<{ value: string; source?: string }> },
+  ) => PublicSafetyResult;
 }
 
 const {
   formatPublicSafetyReport,
   scanPublicSafetyFiles,
+  scanPackageSafetyFiles,
 } = await import(new URL('../../tools/public-safety-check.mjs', import.meta.url).href) as PublicSafetyModule;
 
 describe('public safety check', () => {
@@ -104,5 +109,23 @@ describe('public safety check', () => {
       'private.codex_session_id',
     ]);
     expect(formatPublicSafetyReport(result)).toContain('Public safety check: FAIL');
+  });
+
+  test('can scan the files that will be shipped in the package', () => {
+    expect(scanPackageSafetyFiles).toBeTypeOf('function');
+  });
+
+  test('flags secrets in a generated package artifact', () => {
+    const apiKey = `sk-${'z'.repeat(48)}`;
+    const result = scanPackageSafetyFiles?.([
+      { path: 'dist/index.js', content: `const key = '${apiKey}';` },
+    ]);
+
+    expect(result?.issues).toEqual([
+      expect.objectContaining({
+        path: 'dist/index.js',
+        ruleId: 'secret.openai_api_key',
+      }),
+    ]);
   });
 });

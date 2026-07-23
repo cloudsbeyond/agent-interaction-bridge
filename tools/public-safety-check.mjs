@@ -137,6 +137,14 @@ export function scanPublicSafetyFiles(files, options = {}) {
   };
 }
 
+/**
+ * Scan the final text files selected by npm packaging. Unlike the repository
+ * scan, this intentionally includes generated `dist/` outputs.
+ */
+export function scanPackageSafetyFiles(files, options = {}) {
+  return scanPublicSafetyFiles(files, options);
+}
+
 export function formatPublicSafetyReport(result) {
   const lines = [`Public safety check: ${result.ok ? 'PASS' : 'FAIL'}`];
   if (result.ok) return lines.join('\n');
@@ -192,6 +200,25 @@ export function runPublicSafetyCheck(rootDir = process.cwd()) {
   return result.ok ? 0 : 1;
 }
 
+export function collectPackageSafetyFiles(rootDir = process.cwd()) {
+  return packageManifest(rootDir).flatMap((entry) => {
+    const relativePath = normalizePath(entry.path);
+    const absolutePath = join(rootDir, relativePath);
+    if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) return [];
+    const buffer = readFileSync(absolutePath);
+    if (buffer.includes(0)) return [];
+    return [{ path: relativePath, content: buffer.toString('utf8') }];
+  });
+}
+
+export function runPackageSafetyCheck(rootDir = process.cwd()) {
+  const result = scanPackageSafetyFiles(collectPackageSafetyFiles(rootDir), {
+    denylist: readLocalDenylist(rootDir),
+  });
+  console.log(formatPublicSafetyReport(result).replace('Public safety', 'Package safety'));
+  return result.ok ? 0 : 1;
+}
+
 function collectGitVisiblePaths(rootDir) {
   const output = execFileSync(
     'git',
@@ -203,6 +230,21 @@ function collectGitVisiblePaths(rootDir) {
     .split('\0')
     .filter(Boolean)
     .map(normalizePath);
+}
+
+function packageManifest(rootDir) {
+  const output = execFileSync(
+    'npm',
+    ['pack', '--dry-run', '--json', '--ignore-scripts'],
+    { cwd: rootDir, encoding: 'utf8' },
+  );
+  const manifest = JSON.parse(output);
+  if (!Array.isArray(manifest) || manifest.length !== 1 || !Array.isArray(manifest[0]?.files)) {
+    throw new Error('npm pack did not return one package manifest');
+  }
+  return manifest[0].files.filter(
+    (entry) => entry && typeof entry === 'object' && typeof entry.path === 'string',
+  );
 }
 
 function shouldSkipPath(path) {
@@ -284,5 +326,7 @@ function escapeRegExp(value) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  process.exitCode = runPublicSafetyCheck(process.cwd());
+  process.exitCode = process.argv.includes('--package')
+    ? runPackageSafetyCheck(process.cwd())
+    : runPublicSafetyCheck(process.cwd());
 }

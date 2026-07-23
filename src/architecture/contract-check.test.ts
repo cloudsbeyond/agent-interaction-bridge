@@ -129,10 +129,13 @@ const validInputs: ArchitectureContractInputs = {
         mode: 'durable' as const,
         carriers: ['AGENTS.md'],
         commands: [
+          'pnpm dependency-audit',
           'pnpm test',
+          'pnpm test:coverage',
           'pnpm typecheck',
           'pnpm build',
           'npm pack --dry-run',
+          'pnpm package-safety-check',
           'agent-interaction-bridge resources',
           'agent-interaction-bridge architecture check',
           'agent-interaction-bridge architecture contracts',
@@ -153,7 +156,10 @@ const validInputs: ArchitectureContractInputs = {
     description: 'Local-first bounded interaction bridge for human surfaces and execution agents',
     files: ['dist', 'bin', 'architecture', 'PRD.md', 'README.md'],
     scripts: {
-      prepublishOnly: 'pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts',
+      'dependency-audit': 'pnpm audit --prod',
+      'package-safety-check': 'node tools/public-safety-check.mjs --package',
+      'test:coverage': 'node tools/run-tests.mjs --coverage --coverage.thresholds.lines=70 --coverage.thresholds.functions=78 --coverage.thresholds.branches=73 --coverage.thresholds.statements=70',
+      prepublishOnly: 'pnpm public-safety-check && pnpm dependency-audit && pnpm test:coverage && pnpm typecheck && pnpm build && pnpm package-safety-check',
     },
   },
   publicApi: {
@@ -225,6 +231,44 @@ describe('architecture contract check', () => {
 
     expect(result.ok).toBe(false);
     expect(result.failures).toContain('registry.contracts_valid');
+  });
+
+  test('rejects registries that omit dependency audit and packaged-artifact safety harnesses', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      contractRegistry: {
+        contracts: validInputs.contractRegistry.contracts.map((contract) => ({
+          ...contract,
+          l3: {
+            ...contract.l3,
+            commands: contract.l3.commands.filter(
+              (command) => command !== 'pnpm dependency-audit' && command !== 'pnpm package-safety-check',
+            ),
+          },
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('registry.harness_commands');
+  });
+
+  test('rejects registries that omit the coverage quality harness', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      contractRegistry: {
+        contracts: validInputs.contractRegistry.contracts.map((contract) => ({
+          ...contract,
+          l3: {
+            ...contract.l3,
+            commands: contract.l3.commands.filter((command) => command !== 'pnpm test:coverage'),
+          },
+        })),
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('registry.harness_commands');
   });
 
   test('rejects public API exports that are not listed in the frozen contract', () => {
@@ -384,19 +428,71 @@ describe('architecture contract check', () => {
     expect(result.failures).toContain('package.description_product_boundary');
   });
 
-  test('rejects publish gates that omit package dry-run evidence', () => {
+  test('rejects publish gates that omit packaged-artifact safety evidence', () => {
     const result = checkArchitectureContracts({
       ...validInputs,
       packageJson: {
         ...validInputs.packageJson,
         scripts: {
-          prepublishOnly: 'pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build',
+          'dependency-audit': 'pnpm audit --prod',
+          'package-safety-check': 'node tools/public-safety-check.mjs --package',
+          prepublishOnly: 'pnpm public-safety-check && pnpm dependency-audit && pnpm test && pnpm typecheck && pnpm build',
         },
       },
     });
 
     expect(result.ok).toBe(false);
-    expect(result.failures).toContain('package.prepublish_runs_package_dry_run');
+    expect(result.failures).toContain('package.prepublish_runs_package_safety');
+  });
+
+  test('rejects publish gates that omit dependency audit or packaged-artifact safety checks', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      packageJson: {
+        ...validInputs.packageJson,
+        scripts: {
+          'dependency-audit': 'pnpm audit --prod',
+          'package-safety-check': 'node tools/package-safety-check.mjs',
+          prepublishOnly: 'pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts',
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('package.prepublish_runs_dependency_audit');
+    expect(result.failures).toContain('package.prepublish_runs_package_safety');
+  });
+
+  test('rejects coverage commands that do not enforce the quality thresholds', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      packageJson: {
+        ...validInputs.packageJson,
+        scripts: {
+          ...(validInputs.packageJson.scripts as Record<string, string>),
+          'test:coverage': 'node tools/run-tests.mjs --coverage',
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('package.test_coverage_thresholds');
+  });
+
+  test('rejects publish gates that omit coverage quality enforcement', () => {
+    const result = checkArchitectureContracts({
+      ...validInputs,
+      packageJson: {
+        ...validInputs.packageJson,
+        scripts: {
+          ...(validInputs.packageJson.scripts as Record<string, string>),
+          prepublishOnly: 'pnpm public-safety-check && pnpm dependency-audit && pnpm test && pnpm typecheck && pnpm build && pnpm package-safety-check',
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('package.test_coverage_thresholds');
   });
 
   test('rejects wide left-to-right topology charts in system design', () => {
@@ -454,7 +550,7 @@ describe('architecture contract check', () => {
     expect(output).toContain('package.architecture_included');
     expect(output).toContain('package.prd_included');
     expect(output).toContain('package.agent_devops_excluded');
-    expect(output).toContain('package.prepublish_runs_package_dry_run');
+    expect(output).toContain('package.prepublish_runs_package_safety');
   });
 
   test('accepts the repository architecture contracts', () => {

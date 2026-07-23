@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Local-first bounded interaction bridge for human surfaces and domain agents",
   "type": "module",
+  "packageManager": "pnpm@11.9.0",
   "bin": {
     "agent-interaction-bridge": "./bin/agent-interaction-bridge.mjs"
   },
@@ -32,13 +33,16 @@
   "scripts": {
     "dev": "tsup --watch",
     "public-safety-check": "node tools/public-safety-check.mjs",
+    "dependency-audit": "pnpm audit --prod",
+    "package-safety-check": "node tools/public-safety-check.mjs --package",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node tools/run-tests.mjs",
-    "prepublishOnly": "pnpm public-safety-check && pnpm test && pnpm typecheck && pnpm build && npm pack --dry-run --ignore-scripts"
+    "test:coverage": "node tools/run-tests.mjs --coverage --coverage.thresholds.lines=70 --coverage.thresholds.functions=78 --coverage.thresholds.branches=73 --coverage.thresholds.statements=70",
+    "prepublishOnly": "pnpm public-safety-check && pnpm dependency-audit && pnpm test:coverage && pnpm typecheck && pnpm build && pnpm package-safety-check"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.64.0",
+    "@larksuiteoapi/node-sdk": "1.71.1",
     "commander": "^12.1.0",
     "https-proxy-agent": "^9.0.0",
     "qrcode-terminal": "^0.12.0",
@@ -47,9 +51,11 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/qrcode-terminal": "^0.12.2",
-    "tsup": "^8.3.5",
+    "@vitest/coverage-v8": "3.2.6",
+    "tsup": "8.5.1",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "vite": "6.4.3",
+    "vitest": "^3.2.6"
   },
   "engines": {
     "node": ">=20.0.0"

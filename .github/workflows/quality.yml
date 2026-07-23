@@ -1,0 +1,32 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm public-safety-check
+      - run: pnpm dependency-audit
+      - run: pnpm test:coverage
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm package-safety-check
+      - run: node ./dist/cli.js architecture check
+      - run: node ./dist/cli.js architecture contracts

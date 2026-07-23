@@ -56,6 +56,11 @@ sequenceDiagram
 - `pnpm public-safety-check` is a repo-public hygiene gate. It scans public
   tracked and untracked files for real-looking provider ids, local paths,
   session ids, token patterns, and optional local private denylist terms.
+- `pnpm dependency-audit` rejects known production dependency vulnerabilities.
+  `pnpm package-safety-check` scans the exact `npm pack --dry-run` file list,
+  including generated package artifacts after build.
+- `pnpm test:coverage` uses the isolated test harness and enforces the
+  repository coverage baseline for statements, branches, functions, and lines.
 - npm package contents should remain product-facing unless an explicit release
   decision changes that boundary.
 - Keep diagrams layered. If a devops diagram needs nested subgraphs or mixes

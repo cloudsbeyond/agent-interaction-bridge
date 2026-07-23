@@ -546,14 +546,24 @@ tests must never write fixtures or reply-debug records into the operator's live
 runtime directory.
 
 ```bash
+pnpm public-safety-check
+pnpm dependency-audit
 pnpm test
+pnpm test:coverage
 pnpm typecheck
 pnpm build
+pnpm package-safety-check
 npm pack --dry-run
 ```
 
-Keep changes scoped to the relevant layer and add tests when changing policy,
-routing, rendering, config, task state, or security boundaries.
+`pnpm dependency-audit` rejects known production dependency vulnerabilities.
+`pnpm package-safety-check` runs `npm pack --dry-run` and scans the actual
+package file list, including generated `dist/` artifacts. Keep changes scoped to
+the relevant layer and add tests when changing policy, routing, rendering,
+config, task state, or security boundaries.
+
+`pnpm test:coverage` runs the same isolated test harness and requires at least
+70% statements and lines, 73% branches, and 78% functions.
 
 ## License And Attribution
 

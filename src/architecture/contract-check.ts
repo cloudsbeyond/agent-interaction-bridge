@@ -58,10 +58,13 @@ export interface ArchitectureContractCheckResult {
 }
 
 const REQUIRED_HARNESS_COMMANDS = [
+  'pnpm dependency-audit',
   'pnpm test',
+  'pnpm test:coverage',
   'pnpm typecheck',
   'pnpm build',
   'npm pack --dry-run',
+  'pnpm package-safety-check',
   'agent-interaction-bridge resources',
   'agent-interaction-bridge architecture check',
   'agent-interaction-bridge architecture contracts',
@@ -247,9 +250,28 @@ export function checkArchitectureContracts(
       'package description follows frozen product positioning',
     ),
     check(
-      'package.prepublish_runs_package_dry_run',
-      packageScript(inputs, 'prepublishOnly').includes('npm pack --dry-run'),
-      'prepublish gate runs package dry-run evidence',
+      'package.prepublish_runs_dependency_audit',
+      packageScript(inputs, 'dependency-audit').includes('pnpm audit --prod') &&
+        packageScript(inputs, 'prepublishOnly').includes('pnpm dependency-audit'),
+      'prepublish gate runs a production dependency audit',
+    ),
+    check(
+      'package.prepublish_runs_package_safety',
+      packageScript(inputs, 'package-safety-check').includes('tools/public-safety-check.mjs --package') &&
+        packageScript(inputs, 'prepublishOnly').includes('pnpm package-safety-check'),
+      'prepublish gate scans the packaged artifact, including generated dist output',
+    ),
+    check(
+      'package.test_coverage_thresholds',
+      [
+        'node tools/run-tests.mjs --coverage',
+        '--coverage.thresholds.lines=70',
+        '--coverage.thresholds.functions=78',
+        '--coverage.thresholds.branches=73',
+        '--coverage.thresholds.statements=70',
+      ].every((fragment) => packageScript(inputs, 'test:coverage').includes(fragment)) &&
+        packageScript(inputs, 'prepublishOnly').includes('pnpm test:coverage'),
+      'coverage harness enforces statement, branch, function, and line thresholds',
     ),
   ];
   const failures = checks.filter((item) => !item.passed).map((item) => item.id);
