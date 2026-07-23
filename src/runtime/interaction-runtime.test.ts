@@ -18,11 +18,14 @@ describe('interaction runtime turn planning', () => {
       kind: 'retry_request',
       target: 'unknown_prior_output',
     });
-    expect(plan.prompt).toContain('<bridge_context>');
-    expect(plan.prompt).toContain('chat_id: oc_123');
-    expect(plan.prompt).toContain('<interaction_intent>');
-    expect(plan.prompt).toContain('kind: retry_request');
-    expect(plan.prompt).toContain('你再试试');
+    expect(plan.sections.map((section) => section.kind)).toEqual([
+      'bridge_context',
+      'interaction_intent',
+      'user_message',
+    ]);
+    expect(section(plan, 'bridge_context')).toContain('chat_id: oc_123');
+    expect(section(plan, 'interaction_intent')).toContain('kind: retry_request');
+    expect(section(plan, 'user_message')).toBe('你再试试');
   });
 
   test('keeps ordinary task prompts compact and free of extra intent blocks', () => {
@@ -34,8 +37,11 @@ describe('interaction runtime turn planning', () => {
     });
 
     expect(plan.intent.kind).toBe('task_request');
-    expect(plan.prompt).not.toContain('<interaction_intent>');
-    expect(plan.prompt).toBe('<bridge_context>\ncwd: /work/project\n</bridge_context>\n\nrun tests');
+    expect(plan.sections.map((item) => item.kind)).toEqual([
+      'bridge_context',
+      'user_message',
+    ]);
+    expect(section(plan, 'interaction_intent')).toBe('');
   });
 
   test('adds Dynamic UI presentation guidance for visual task prompts', () => {
@@ -48,16 +54,17 @@ describe('interaction runtime turn planning', () => {
 
     expect(plan.intent).toMatchObject({
       kind: 'task_request',
-      presentation: {
-        representation: 'interactive_card',
-        source: 'dynamic_ui_heuristic',
-      },
     });
-    expect(plan.prompt).toContain('<interaction_intent>');
-    expect(plan.prompt).toContain('Dynamic UI');
-    expect(plan.prompt).toContain('strict card-ready shape');
-    expect(plan.prompt).toContain('source-backed metric or quantitative analysis');
-    expect(plan.prompt).toContain('Do not write a single summary paragraph');
+    expect(plan.intent).not.toHaveProperty('presentation');
+    expect(plan.presentationPlan).toMatchObject({
+      representation: 'interactive_card',
+      source: 'dynamic_ui_heuristic',
+      layout: 'visual',
+    });
+    expect(section(plan, 'interaction_intent')).toBe('');
+    expect(section(plan, 'presentation_plan')).toContain('expression_profile: visual');
+    expect(section(plan, 'presentation_plan')).not.toContain('<presentation_plan>');
+    expect(section(plan, 'presentation_plan')).not.toContain('Do not concatenate section headings');
   });
 
   test('renders attachments as channel-neutral local artifacts', () => {
@@ -74,9 +81,9 @@ describe('interaction runtime turn planning', () => {
       ],
     });
 
-    expect(plan.prompt).toContain('请看下面的附件。');
-    expect(plan.prompt).toContain('附件（本地路径）：');
-    expect(plan.prompt).toContain('- /tmp/a.png (a.png) — 图片');
+    expect(section(plan, 'user_message')).toBe('请看下面的附件。');
+    expect(section(plan, 'attachments')).toContain('附件（本地路径）：');
+    expect(section(plan, 'attachments')).toContain('- /tmp/a.png (a.png) — 图片');
   });
 
   test('can build a turn plan with an explicitly supplied stateless intent judge', async () => {
@@ -102,6 +109,25 @@ describe('interaction runtime turn planning', () => {
     );
 
     expect(plan.intent.kind).toBe('presentation_feedback');
-    expect(plan.prompt).toContain('Rewrite with clearer structure.');
+    expect(section(plan, 'interaction_intent')).toContain('Rewrite with clearer structure.');
+  });
+
+  test('keeps user markdown and code whitespace while normalizing outer blank lines', () => {
+    const plan = buildInteractionTurnPlan({
+      channel: 'feishu',
+      context: {},
+      userText: '\r\n \r\n  heading\r\n\r\n```ts\r\n  const x = 1;\r\n```\r\n',
+    });
+
+    expect(section(plan, 'user_message')).toBe(
+      '  heading\n\n```ts\n  const x = 1;\n```',
+    );
   });
 });
+
+function section(
+  plan: ReturnType<typeof buildInteractionTurnPlan>,
+  kind: string,
+): string {
+  return plan.sections.find((item) => item.kind === kind)?.content ?? '';
+}

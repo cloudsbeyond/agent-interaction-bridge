@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest';
 import { ProactiveCorrelationStore } from './correlation-store';
 
 describe('ProactiveCorrelationStore', () => {
-  test('persists bounded correlation and resolves only matching chat/profile/message', async () => {
+  test('persists bounded correlation and finds only matching chat/message candidates', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'aib-correlation-'));
     const path = join(dir, 'correlations.json');
     let id = 0;
@@ -28,33 +28,52 @@ describe('ProactiveCorrelationStore', () => {
     });
     await store.markDelivered(reserved.record.correlationId, 'carrier-message-1');
 
-    expect(store.resolveReply({
+    expect(store.findReplyCandidate({
       chatId: 'chat-1',
       candidateMessageIds: ['carrier-message-1'],
-      endpointProfileId: 'agent_profile.codex_host',
     })).toMatchObject({
       scope: 'chat-1:thread-1',
       sessionId: 'session-1',
       carrierMessageId: 'carrier-message-1',
       status: 'delivered',
     });
-    expect(store.resolveReply({
+    expect(store.findReplyCandidate({
       chatId: 'chat-2',
       candidateMessageIds: ['carrier-message-1'],
-      endpointProfileId: 'agent_profile.codex_host',
-    })).toBeUndefined();
-    expect(store.findReplyCandidate({
-      chatId: 'chat-1',
-      candidateMessageIds: ['carrier-message-1'],
-    })).toMatchObject({ endpointProfileId: 'agent_profile.codex_host' });
-    expect(store.resolveReply({
-      chatId: 'chat-1',
-      candidateMessageIds: ['carrier-message-1'],
-      endpointProfileId: 'agent_profile.guest',
     })).toBeUndefined();
 
     const stat = await readFile(path, 'utf8');
     expect(stat).toContain('carrier-message-1');
+  });
+
+  test('marks a reply as consumed and migrates the legacy reply_resolved status', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'aib-correlation-'));
+    const path = join(dir, 'correlations.json');
+    const store = new ProactiveCorrelationStore({ path, createId: () => 'correlation-1' });
+    const reserved = await store.reserve({
+      signalId: 'signal-1',
+      signalKind: 'status',
+      chatId: 'chat-1',
+      scope: 'chat-1',
+      sessionId: 'session-1',
+      agentRuntimeId: 'runtime-1',
+      endpointProfileId: 'profile-1',
+      cwd: '/work',
+      contextVersion: 'v1',
+    });
+    await store.markDelivered(reserved.record.correlationId, 'carrier-message-1');
+    await expect(store.markReplyConsumed(
+      reserved.record.correlationId,
+      'reply-message-1',
+    )).resolves.toMatchObject({ status: 'reply_consumed', replyMessageId: 'reply-message-1' });
+
+    const legacy = JSON.parse(await readFile(path, 'utf8')) as Array<Record<string, unknown>>;
+    legacy[0]!.status = 'reply_resolved';
+    await writeFile(path, `${JSON.stringify(legacy)}\n`);
+    const reloaded = new ProactiveCorrelationStore({ path });
+    await reloaded.load();
+    expect(reloaded.get('correlation-1')).toMatchObject({ status: 'reply_consumed' });
+    expect(await readFile(path, 'utf8')).toContain('"status": "reply_consumed"');
   });
 
   test('deduplicates retries by scope, session, and stable signal id', async () => {

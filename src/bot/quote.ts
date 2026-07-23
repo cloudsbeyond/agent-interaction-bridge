@@ -5,6 +5,10 @@ import type {
 } from '@larksuiteoapi/node-sdk';
 import { normalize } from '@larksuiteoapi/node-sdk';
 import { log } from '../core/logger';
+import {
+  renderAgentPromptSection,
+  type AgentPromptSection,
+} from '../interaction/prompt';
 
 export interface QuotedContext {
   messageId: string;
@@ -121,18 +125,22 @@ export async function fetchQuotedContext(
  * concatenating without conditional checks.
  */
 export function renderQuotedBlock(quotes: QuotedContext[]): string {
-  if (quotes.length === 0) return '';
-  const parts = quotes.map((q) => {
-    const attrs = [
-      `id="${q.messageId}"`,
-      q.senderId ? `sender_id="${q.senderId}"` : '',
-      q.senderName ? `sender_name="${q.senderName}"` : '',
-      q.createdAt ? `created_at="${q.createdAt}"` : '',
-      `type="${q.rawContentType}"`,
-    ]
-      .filter(Boolean)
-      .join(' ');
-    return `<quoted_message ${attrs}>\n${q.content}\n</quoted_message>`;
-  });
-  return parts.join('\n');
+  return buildQuotedPromptSections(quotes)
+    .map(renderAgentPromptSection)
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+export function buildQuotedPromptSections(
+  quotes: QuotedContext[],
+): AgentPromptSection[] {
+  return quotes.map((quote) => ({
+    kind: 'quoted_message',
+    content: quote.content,
+    attributes: {
+      ...(quote.senderName ? { sender_name: quote.senderName } : {}),
+      ...(quote.createdAt ? { created_at: quote.createdAt } : {}),
+      type: quote.rawContentType,
+    },
+  }));
 }

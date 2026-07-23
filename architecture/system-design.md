@@ -148,11 +148,32 @@ that chain before session lookup and resumes the originating Domain Agent task.
 
 Every normal Feishu/Lark response also projects the current Bridge conversation
 scope and Domain Agent session/thread reference into a presentation-only footer.
-The footer uses existing state references, preserves the suffix when an
-identifier exceeds 12 characters, omits ellipses and decoration, and renders
-one `Session：Bridge - <id> | Domain - <id>` line. Markdown and card
+The footer uses existing state references, displays the final 8 characters of a
+longer Bridge scope identifier and the first 8 characters of a longer Domain
+session/thread identifier, leaves shorter values unchanged, and omits ellipses
+and decoration. When the reply belongs to a current or completed task, it also
+projects that task's elapsed runtime using compact minute/second notation. It
+renders one
+`Session：📥 - <id> | 🤖 - <id> | ⏳ - <duration>` line, where 📥 projects the
+Bridge scope, 🤖 projects the Domain Agent thread, and ⏳ projects elapsed task
+time. Replies without task timing omit the duration segment. Markdown and card
 lowering uses a `>` quote block while plain-text lowering omits quote syntax.
-It grants no routing or session authority.
+It grants no routing, session, or lifecycle authority.
+
+Existing Domain Agent thread binding is an explicit operator workflow, not
+presentation observability. Bridge first applies endpoint-profile policy, asks
+the selected endpoint adapter for saved threads in the resolved cwd, and lets
+the human choose one. Before persisting the reference, Bridge re-reads the
+thread through the same profile and rejects missing, cwd-mismatched, ephemeral,
+or active threads. Discovery previews are derived only from endpoint-supplied
+thread name/preview metadata: deterministic lowering first extracts the
+canonical `<user_message>` body, falls back to removing legacy Bridge-owned
+prompt prefixes, collapses whitespace, and caps the result at 200 Unicode
+characters. It does not load turns or invoke a helper model. The Bridge session
+store keeps only the validated thread reference, resolved cwd, runtime/profile
+key, and context version; it never parses, copies, or owns Codex rollout files.
+P0 continues the selected thread on the next Feishu/Lark turn, but does not
+provide live Codex Desktop co-control or cross-process steering.
 
 Runtime Services are the support plane for profiles, resources, sessions,
 ActionLog, artifacts, vectors, and other runtime state stores.
@@ -219,6 +240,13 @@ sequenceDiagram
   endpoint implementations, not as the generic agent-role definition.
 - Move visual, report, comparison, watch, voice, and other expression choices
   into `ExpressionProfile` and `PresentationPlan`, not `InteractionIntent`.
+- Keep `InteractionTurnPlan` structured through policy and approval handling.
+  One deterministic renderer lowers its ordered sections only at the execution
+  endpoint handoff; prompt assembly must not be split across carrier, intent,
+  and endpoint string wrappers.
+- Bind pending approvals to the gateway mode and session context version that
+  produced their `AgentTask`. A mode or context-version change makes the
+  approval stale and must fail closed before endpoint execution.
 - Add `SurfaceContext` before presentation planning so device and channel
   constraints affect expression without changing task meaning.
 - Add `CapabilityCatalog` above `ResourceCatalog`: capabilities describe what
@@ -325,6 +353,27 @@ Owns channel-neutral display intent: expression profile, layout, sections,
 density, artifact requests, fallback, and quality checks. It must not own
 carrier send/update APIs or domain-agent behavior.
 
+### InteractionTurnPlan
+
+Owns the ordered, typed Domain Agent prompt sections for one human turn.
+Adapter plans may contain interaction protocol, signal protocol, presentation
+hint, minimal semantic surface context, quoted context, InteractionIntent,
+PresentationPlan, user message, and attachments. Relay plans contain only the
+plain-text response template plus the minimum quote, mention-name, user-message,
+and attachment facts needed for transport.
+
+`InteractionTurnPlan` stays structured through approval and policy resolution.
+Its section content contains only the text inside its canonical XML-like tag.
+One deterministic renderer owns tag emission, escaped structured attributes,
+LF normalization, fixed section order, and exactly one blank line between
+non-empty sections. It removes only outer blank lines and preserves internal
+user Markdown, indentation, blank lines, and fenced code. The canonical order
+is protocols, presentation hint, context/quotes, intent/presentation plan, user
+message, then attachments. Legacy prewrapped sections are unwrapped once during
+normalization so persisted approval envelopes remain readable without migration.
+Provider routing identifiers such as chat, sender, and mention target ids stay
+in Bridge state unless the task semantics explicitly require them.
+
 ### DeliveryPlan
 
 Owns carrier-specific lowering from PresentationPlan and SurfaceContext:
@@ -349,6 +398,13 @@ Owns stable information emitted by domain agents or bridge processing:
 progress, final answer, artifact ready, proactive outbound intent, risk approval
 required, failure, or needs-human-input.
 
+Signal provenance controls continuity semantics without changing the semantic
+kind. Endpoint-native signals and explicit interaction requests may enter the
+proactive correlation and ActionLog path. Signals deterministically derived by
+Bridge from an in-flight tool result are same-turn presentation enrichment:
+they are delivered through normal bridge presentation but are not resumable
+outbound intent and do not create proactive correlation state.
+
 ### Policy
 
 Owns authority, access, HITL, audit, routing, endpoint profiles, resource
@@ -363,11 +419,28 @@ human channel protocol, presentation formatting, carrier callbacks, bridge
 credentials, or bridge helper-model capabilities. Codex is the current Domain
 Agent; exec and app-server are endpoint implementations behind that role.
 
+### Existing Thread Binding
+
+Owns provider-neutral discovery metadata and explicit selection of an existing
+Domain Agent session. It is bounded by the current endpoint profile and cwd.
+The Codex app-server adapter currently lowers this to `thread/list` and
+`thread/read`; provider-specific source/status payloads stay inside that
+adapter. An active thread is ineligible because P0 has no shared-daemon
+single-writer coordination with Codex Desktop.
+
 ### ActionLog
 
 Owns durable evidence of inbound turns, perception outputs, capability use,
 typed proposals, accepted and rejected alternatives, policy gates, endpoint
 tasks, delivery result, and user feedback.
+
+Proactive reply continuity uses explicit audit stages. `reply_correlated` means
+the inbound reply matched a delivered correlation and passed the initial
+boundary check. `reply_consumed` means that reply has been claimed for one
+continuation or approval workflow; it does not prove endpoint continuation.
+`resume_succeeded` means the endpoint confirmed the originating session for the
+continuation attempt. `resume_failed` records a failed or unconfirmed resume,
+including whether Bridge then retried as a fresh session.
 
 ### Runtime Data
 

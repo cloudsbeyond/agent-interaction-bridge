@@ -218,9 +218,11 @@ async function reply(ctx: CommandContext, markdown: string): Promise<void> {
 }
 
 function sessionIdentity(ctx: CommandContext): InteractionSessionIdentity {
+  const task = ctx.taskStatus?.snapshot(ctx.scope);
   return {
     bridge: ctx.scope,
     domain: ctx.sessions.getRaw(ctx.scope)?.sessionId,
+    ...(task?.startedAt !== undefined ? { elapsedMs: task.elapsedMs } : {}),
   };
 }
 
@@ -653,9 +655,16 @@ async function handleGatewayMode(args: string, ctx: CommandContext): Promise<voi
   if (trimmed === 'default' || trimmed === 'reset') {
     const cleared = ctx.sessions.clearGatewayModeOverride(ctx.scope);
     const clearedSession = ctx.sessions.clearResumableSession(ctx.scope);
+    const cancelledApprovals = ctx.approvals.cancelScope(ctx.scope);
     log.info('command', 'gateway-mode-clear', { scope: ctx.scope, cleared });
     if (clearedSession) {
       log.info('command', 'gateway-mode-session-cleared', { scope: ctx.scope, mode: globalMode });
+    }
+    if (cancelledApprovals > 0) {
+      log.info('command', 'gateway-mode-approvals-cancelled', {
+        scope: ctx.scope,
+        count: cancelledApprovals,
+      });
     }
     await reply(
       ctx,
@@ -689,9 +698,16 @@ async function handleGatewayMode(args: string, ctx: CommandContext): Promise<voi
 
   ctx.sessions.setGatewayMode(ctx.scope, requestedMode);
   const clearedSession = ctx.sessions.clearResumableSession(ctx.scope);
+  const cancelledApprovals = ctx.approvals.cancelScope(ctx.scope);
   log.info('command', 'gateway-mode-set', { scope: ctx.scope, mode: requestedMode });
   if (clearedSession) {
     log.info('command', 'gateway-mode-session-cleared', { scope: ctx.scope, mode: requestedMode });
+  }
+  if (cancelledApprovals > 0) {
+    log.info('command', 'gateway-mode-approvals-cancelled', {
+      scope: ctx.scope,
+      count: cancelledApprovals,
+    });
   }
   await reply(ctx, `当前 session gatewayMode 已设为 ${requestedMode}。`);
 }
@@ -898,6 +914,14 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
   const run = ctx.agent.run(runPlan.run);
   const handle = ctx.activeRuns.register(ctx.scope, run);
+  const doctorStartedAt = Date.now();
+  const doctorSessionIdentity = (
+    domain: string | undefined,
+  ): InteractionSessionIdentity => ({
+    bridge: ctx.scope,
+    domain,
+    elapsedMs: Date.now() - doctorStartedAt,
+  });
 
   try {
     if (isP2p) {
@@ -907,15 +931,15 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
         ctx.msg.chatId,
         {
           card: {
-            initial: appendSessionIdentityCard(renderCard(initialState), {
-              bridge: ctx.scope,
-              domain: doctorSessionId,
-            }),
+            initial: appendSessionIdentityCard(
+              renderCard(initialState),
+              doctorSessionIdentity(doctorSessionId),
+            ),
             producer: async (ctrl) => {
               let state: RunState = initialState;
               const flush = (): Promise<void> => ctrl.update(appendSessionIdentityCard(
                 renderCard(state),
-                { bridge: ctx.scope, domain: doctorSessionId },
+                doctorSessionIdentity(doctorSessionId),
               ));
               for await (const evt of handle.run.events) {
                 if (handle.interrupted) break;
@@ -977,10 +1001,10 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
         data: {
           receive_id: ctx.msg.senderId,
           msg_type: 'interactive',
-          content: JSON.stringify(appendSessionIdentityCard(renderCard(state), {
-            bridge: ctx.scope,
-            domain: doctorSessionId,
-          })),
+          content: JSON.stringify(appendSessionIdentityCard(
+            renderCard(state),
+            doctorSessionIdentity(doctorSessionId),
+          )),
         },
       });
     }

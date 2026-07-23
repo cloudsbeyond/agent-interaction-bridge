@@ -57,8 +57,9 @@ describe('cloud-doc comment mentions', () => {
       call[0]?.data?.content?.elements?.[0]?.text_run?.text,
     );
     const requestText = replyCall?.[0]?.data?.content?.elements?.[0]?.text_run?.text;
-    expect(requestText).toContain('Session：Bridge - oc:doc_token');
-    expect(requestText).toContain('Domain - session_1');
+    expect(requestText).toContain('Session：📥 - oc_token');
+    expect(requestText).toContain('🤖 - session_');
+    expect(requestText).toContain('| ⏳ - ');
   });
 });
 

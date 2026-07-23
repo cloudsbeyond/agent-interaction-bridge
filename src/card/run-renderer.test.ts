@@ -89,17 +89,18 @@ describe('renderCard', () => {
     const card = appendSessionIdentityCard(
       renderCard(state),
       {
-        bridge: 'test-bridge-096950d3c05e',
-        domain: 'test-domain-dc54e20e89da',
+        bridge: 'bridge-scope-prefix-50d3c05e',
+        domain: '019f89b0-domain-session-suffix',
+        elapsedMs: 75_000,
       },
     ) as { body: { elements: Array<{ tag?: string; content?: string }> } };
     const serialized = JSON.stringify(card);
 
-    expect(serialized.match(/Session：Bridge -/gu)).toHaveLength(1);
+    expect(serialized.match(/Session：📥 -/gu)).toHaveLength(1);
     expect(serialized).not.toContain('old-bridge');
     expect(card.body.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - 096950d3c05e | Domain - dc54e20e89da',
+      content: '> Session：📥 - 50d3c05e | 🤖 - 019f89b0 | ⏳ - 1m 15s',
       text_size: 'notation',
     });
   });

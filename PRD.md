@@ -30,15 +30,25 @@ P0 is a local-first bounded interaction bridge agent:
 - Bridge-agent objects for turn facts, surface context, perception,
   intent, expression, presentation, delivery, tasks, signals, and action logs.
 - Domain-agent handoff to Codex through exec or app-server endpoints.
+- Human-selected discovery and binding of an existing idle Codex thread through
+  the active endpoint profile, so a Feishu/Lark scope can continue saved local
+  work without copying endpoint session files into Bridge state. The discovery
+  list removes Bridge-owned prompt envelopes from endpoint metadata and limits
+  each task preview to 200 Unicode characters without loading conversation
+  turns or invoking a helper model.
 - Domain-agent-initiated outbound interaction through bridge policy,
   presentation, carrier delivery, and ActionLog.
 - Correlation from outbound intent to carrier message, conversation scope, and
   originating domain-agent session so human replies resume the same task.
 - A compact presentation-only footer on every normal Feishu/Lark reply showing
-  the current Bridge scope and Domain session/thread reference, with each
-  identifier rendered as its final 12 characters without an ellipsis on one
-  `Session：Bridge - <id> | Domain - <id>` line. Markdown and card
-  carriers use quote styling; plain-text carriers omit quote syntax.
+  the current Bridge scope and Domain session/thread reference. Bridge scope
+  displays its final 8 characters and Domain session/thread displays its first
+  8 characters; shorter values remain unchanged and no ellipsis is added. When
+  task timing is available, the footer appends compact elapsed time on one
+  `Session：📥 - <id> | 🤖 - <id> | ⏳ - <duration>` line, where 📥 represents
+  Bridge scope, 🤖 the Domain Agent thread, and ⏳ elapsed task time. Replies
+  without task timing omit that segment. Markdown and card carriers use quote
+  styling; plain-text carriers omit quote syntax.
 - Gateway modes: `relay` and `adapter`.
 - Runtime Services as the external support plane for helper resources, storage,
   sessions, artifacts, vectors, and resource status.
@@ -61,6 +71,8 @@ P0 is a local-first bounded interaction bridge agent:
 - Do not add ACP, A2A, public proactive ingress, or a Codex plugin/skill
   transport in P0. Future adapters may reuse AgentSignal without taking Bridge
   carrier authority.
+- Do not promise live Codex Desktop co-control, cross-process turn steering, or
+  concurrent writes to one thread in P0. Active threads must not be bound.
 
 ## Downstream Chain
 

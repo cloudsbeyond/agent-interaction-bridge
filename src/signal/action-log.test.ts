@@ -67,4 +67,31 @@ describe('proactive ActionLog', () => {
       data: {},
     })).rejects.toThrow('storage.record_store is unavailable');
   });
+
+  test.each([
+    'reply_consumed',
+    'resume_succeeded',
+    'resume_failed',
+  ] as const)('accepts the proactive reply lifecycle event %s', async (type) => {
+    const runtimeContext = context();
+    const log = new ProactiveActionLog({
+      context: runtimeContext,
+      config: {},
+      createId: () => type,
+    });
+
+    await log.append({ type, correlationId: 'correlation-1', data: { sessionId: 'session-1' } });
+
+    expect(runtimeContext.runtime.call).toHaveBeenCalledWith(
+      'record.upsert',
+      expect.objectContaining({
+        data: expect.objectContaining({
+          eventType: type,
+          correlationId: 'correlation-1',
+          sessionId: 'session-1',
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
 });

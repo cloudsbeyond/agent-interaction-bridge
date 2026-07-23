@@ -21,7 +21,7 @@ const POST_DONE_EXIT_GRACE_MS = 2000;
 export interface AgentStreamOptions {
   onInteraction?: (request: InteractionRequest) => Promise<void>;
   onSignal?: (signal: AgentSignal, source: 'endpoint' | 'bridge_tool') => Promise<void>;
-  onSession?: (sessionId: string) => void;
+  onSession?: (sessionId: string) => void | Promise<void>;
 }
 
 /**
@@ -170,7 +170,7 @@ export async function processAgentStream(
             agentRuntimeId,
             sessionContextVersion,
           );
-          options.onSession?.(effectiveEvt.sessionId);
+          await options.onSession?.(effectiveEvt.sessionId);
           log.info('session', 'set', { sessionId: effectiveEvt.sessionId });
         }
         continue;

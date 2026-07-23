@@ -12,6 +12,7 @@ coverage/
 .idea/
 .vscode/
 .alphaX/
+docs/superpowers/
 
 # Internal-only: dev smoke scripts and full changelog stay local, do not ship
 scripts/

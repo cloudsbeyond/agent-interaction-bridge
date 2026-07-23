@@ -41,6 +41,7 @@ contracts:
         - ./card/text-renderer
         - ./cli/commands/registry
         - ./interaction/intent
+        - ./interaction/presentation-plan
         - ./presentation/capabilities
         - ./presentation/document
         - ./presentation/renderers/feishu-card

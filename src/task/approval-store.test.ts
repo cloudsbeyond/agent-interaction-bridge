@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TaskApprovalStore, parseApprovalDecision } from './approval-store';
+import { createAgentPromptEnvelope } from '../interaction/prompt';
 
 describe('TaskApprovalStore', () => {
   it('stores pending task approvals by short id and consumes them once', () => {
@@ -9,15 +10,31 @@ describe('TaskApprovalStore', () => {
       scope: 'chat-1',
       chatId: 'chat-1',
       messageId: 'msg-1',
-      prompt: 'fix login',
+      promptEnvelope: createAgentPromptEnvelope({
+        mode: 'adapter',
+        channel: 'feishu',
+        sections: [{ kind: 'user_message', content: 'fix login' }],
+      }),
       task: 'fix login',
       cwd: '/repo',
       sessionId: 'thread-1',
+      gatewayMode: 'adapter',
+      contextVersion: 'adapter-v1',
+      proactiveCorrelationId: 'correlation-1',
+      proactiveSessionId: 'thread-1',
     });
 
     expect(approval.id).toBe('approval-1');
-    expect(store.get('approval-1')?.prompt).toBe('fix login');
+    expect(store.get('approval-1')?.promptEnvelope.sections.at(-1)).toEqual({
+      kind: 'user_message',
+      content: 'fix login',
+    });
     expect(store.latestForScope('chat-1')?.id).toBe('approval-1');
+    expect(store.get('approval-1')?.proactiveCorrelationId).toBe('correlation-1');
+    expect(store.get('approval-1')).toMatchObject({
+      gatewayMode: 'adapter',
+      contextVersion: 'adapter-v1',
+    });
     expect(store.consume('approval-1')?.cwd).toBe('/repo');
     expect(store.get('approval-1')).toBeUndefined();
   });

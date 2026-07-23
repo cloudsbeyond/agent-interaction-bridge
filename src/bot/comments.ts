@@ -167,6 +167,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     : false;
 
   try {
+    const runStartedAt = Date.now();
     const run = agent.run(runOptions);
     let domainSessionId = resumeFrom;
     let answer = '';
@@ -217,7 +218,11 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     let reply = stripMarkdown(answer.trim());
     if (errorMsg) reply = `⚠️ Agent runtime 报错：${errorMsg}`;
     if (!reply) reply = '（无回复内容）';
-    const identity = { bridge: synthChatId, domain: domainSessionId };
+    const identity = {
+      bridge: synthChatId,
+      domain: domainSessionId,
+      elapsedMs: Date.now() - runStartedAt,
+    };
     const footerLength = renderSessionIdentityPlainText(identity).length + 2;
     const bodyMaxChars = Math.max(1, REPLY_MAX_CHARS - footerLength);
     if (reply.length > bodyMaxChars) reply = `${reply.slice(0, bodyMaxChars - 1)}…`;

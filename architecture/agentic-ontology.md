@@ -304,6 +304,24 @@ Fields:
 
 It must not own carrier send APIs or domain-agent behavior.
 
+### InteractionTurnPlan
+
+The channel-neutral ordered prompt plan for one human turn.
+
+Fields:
+
+- gateway mode
+- channel
+- typed ordered sections
+- InteractionIntent
+- optional ExpressionProfile
+- optional PresentationPlan
+
+The plan remains structured through policy and approval handling. A single
+deterministic renderer lowers it at the execution endpoint boundary. Carrier
+routing ids remain in Bridge state unless Domain Agent reasoning explicitly
+needs them.
+
 For Feishu/Lark, the final presentation projects existing Bridge scope and
 Domain session/thread references into a compact observability footer. This is a
 display rule over existing state, not a new ontology object or routing input.
@@ -351,6 +369,11 @@ Examples:
 - failed
 - needs human input
 
+Endpoint-native signals and explicit interaction requests may become proactive,
+reply-correlated interaction. Signals derived by Bridge from a tool result are
+same-turn presentation enrichment only: they retain their AgentSignal semantic
+kind but do not create proactive correlation or resumable reply authority.
+
 ### ActionLog
 
 An audit object for decisions and state transitions.
@@ -366,6 +389,8 @@ Records:
 - endpoint tasks
 - outbound correlation from domain-agent intent to carrier message, scope, and session
 - delivery result
+- reply correlation and one-time reply consumption
+- originating-session resume success or failure
 - user feedback
 
 ActionLog is the source for future learning and debugging.

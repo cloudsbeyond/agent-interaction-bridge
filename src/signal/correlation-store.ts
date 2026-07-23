@@ -15,7 +15,7 @@ export type ProactiveCorrelationStatus =
   | 'delivery_failed'
   | 'delivery_unknown'
   | 'audit_failed'
-  | 'reply_resolved';
+  | 'reply_consumed';
 
 export interface ProactiveCorrelationRecord {
   schemaVersion: 1;
@@ -85,7 +85,8 @@ export class ProactiveCorrelationStore {
       this.records = Array.isArray(raw)
         ? raw.map(normalizeRecord).filter((item): item is ProactiveCorrelationRecord => Boolean(item))
         : [];
-      if (this.prune()) await this.persist();
+      const normalized = JSON.stringify(this.records) !== JSON.stringify(raw);
+      if (this.prune() || normalized) await this.persist();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
@@ -149,18 +150,8 @@ export class ProactiveCorrelationStore {
     return this.update(correlationId, { status, failureReason: failureReason.slice(0, 1_000) });
   }
 
-  async markReplyResolved(correlationId: string, replyMessageId: string): Promise<ProactiveCorrelationRecord> {
-    return this.update(correlationId, { status: 'reply_resolved', replyMessageId });
-  }
-
-  resolveReply(input: {
-    chatId: string;
-    candidateMessageIds: string[];
-    endpointProfileId: string;
-  }): ProactiveCorrelationRecord | undefined {
-    const record = this.findReplyCandidate(input);
-    if (record?.endpointProfileId !== input.endpointProfileId) return undefined;
-    return record;
+  async markReplyConsumed(correlationId: string, replyMessageId: string): Promise<ProactiveCorrelationRecord> {
+    return this.update(correlationId, { status: 'reply_consumed', replyMessageId });
   }
 
   findReplyCandidate(input: {
@@ -264,7 +255,19 @@ function normalizeRecord(value: unknown): ProactiveCorrelationRecord | undefined
       'expiresAt',
     ])
   ) return undefined;
-  return value as ProactiveCorrelationRecord;
+  const status = item.status === 'reply_resolved' ? 'reply_consumed' : item.status;
+  if (!isProactiveCorrelationStatus(status)) return undefined;
+  return { ...(value as ProactiveCorrelationRecord), status };
+}
+
+function isProactiveCorrelationStatus(value: unknown): value is ProactiveCorrelationStatus {
+  return value === 'pending'
+    || value === 'policy_rejected'
+    || value === 'delivered'
+    || value === 'delivery_failed'
+    || value === 'delivery_unknown'
+    || value === 'audit_failed'
+    || value === 'reply_consumed';
 }
 
 function requiredStrings(value: Record<string, unknown>, fields: string[]): boolean {

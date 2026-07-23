@@ -93,10 +93,16 @@ README.md / PRD.md
   session, so a human reply resumes the same task context.
 - Every normal Feishu/Lark reply must expose the current Bridge conversation
   scope and Domain Agent session/thread reference as presentation-only
-  observability. Each displayed identifier is at most 12 characters; longer
-  values display only their final 12 characters without an ellipsis. The footer
-  is one line: `Session：Bridge - <id> | Domain - <id>`. Markdown and card
-  carriers render it as a `>` quote block; plain-text carriers omit quote syntax.
+  observability. Each displayed identifier is at most 8 characters: longer
+  Bridge scope identifiers display their final 8 characters, while longer
+  Domain session/thread identifiers display their first 8 characters, without
+  an ellipsis. When the reply has task context, append the current or completed
+  task runtime using compact minute/second notation. The footer is one line:
+  `Session：📥 - <id> | 🤖 - <id> | ⏳ - <duration>`, where 📥 denotes Bridge
+  scope, 🤖 denotes the Domain Agent thread, and ⏳ denotes elapsed task time.
+  Replies without task timing omit the duration segment. Markdown and card
+  carriers render the footer as a `>` quote block; plain-text carriers omit
+  quote syntax.
 - `InteractionIntent` is conversational-act interpretation, not channel payload,
   Dynamic UI routing, presentation layout, or execution authority.
 - `ExpressionProfile` owns the semantic expression shape such as report,

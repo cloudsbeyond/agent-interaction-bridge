@@ -14,7 +14,10 @@ export type ProactiveActionLogEventType =
   | 'delivery_succeeded'
   | 'delivery_failed'
   | 'reply_correlated'
-  | 'reply_rejected';
+  | 'reply_rejected'
+  | 'reply_consumed'
+  | 'resume_succeeded'
+  | 'resume_failed';
 
 export interface ProactiveActionLogEvent {
   type: ProactiveActionLogEventType;

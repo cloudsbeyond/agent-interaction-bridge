@@ -23,7 +23,7 @@ contracts:
       owner: human
       status: frozen
       path: architecture/contracts/codex-endpoint.yaml
-      freeze_signal: Bridge-agent and domain-agent role alignment accepted by human owner on 2026-07-22.
+      freeze_signal: Existing idle Codex thread discovery, bounded preview, and binding accepted by human owner on 2026-07-23.
       invariants:
         - exec and app-server remain endpoint implementations behind the same agent boundary.
         - Profile constraints must project into cwd, CODEX_HOME, sandbox, approval policy, and session keys.
@@ -33,17 +33,23 @@ contracts:
         - Bridge model resources must never be advertised or projected as Codex exec/app-server tools, capabilities, or authority.
         - Domain-agent sessions and app-server pools are endpoint-profile state and must not become bridge memory unless policy maps references into typed correlation, ActionLog, or AgentSignal objects.
         - Codex may emit a proactive outbound intent as AgentSignal, but Bridge owns policy, human-surface delivery, carrier credentials, audit, and reply correlation.
+        - An endpoint adapter must establish the authoritative session id before exposing turn events that can carry proactive AgentSignal; a fresh run without a session id fails closed rather than correlating an early signal to unrelated state.
         - P0 transports AgentSignal through the existing exec and app-server streams; ACP, A2A, public ingress, and Codex plugin/skill adapters remain future transports and must not redefine Bridge authority.
         - Execution endpoint adapters must use endpoint-profile state only; they must not reuse bridge resources or sessions.
         - app-server compatibility changes must keep exec fallback available.
+        - Existing-thread discovery and validation must use endpoint protocol APIs behind a provider-neutral adapter boundary; Bridge must not scan or copy Codex rollout files.
+        - Existing-thread list previews must use endpoint name/preview metadata only, prefer the canonical `<user_message>` body, fall back to removing legacy Bridge-owned prompt prefixes, collapse whitespace, and display at most 200 Unicode characters without loading turns or invoking a helper model.
+        - Endpoint profile policy must resolve cwd, CODEX_HOME, and runtime/profile session key before thread discovery, validation, or binding.
+        - P0 may bind only a human-selected, non-ephemeral thread whose cwd exactly matches the resolved scope cwd and whose reported status is not active.
+        - P0 thread binding continues saved work on a later Feishu/Lark turn; it does not promise live Codex Desktop co-control, cross-process steering, or concurrent writers.
         - In-process endpoint replacement must preflight the replacement before disconnecting the active carrier, restore the previous carrier when cutover fails, and terminate for service-manager recovery when both replacement and rollback fail.
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/agent/codex/stream-json.test.ts src/signal/protocol.test.ts src/cli/commands/start.test.ts
+          command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/agent/codex/app-server-sessions.test.ts src/agent/codex/stream-json.test.ts src/commands/resume.test.ts src/signal/protocol.test.ts src/cli/commands/start.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/agent/codex/stream-json.test.ts src/signal/protocol.test.ts src/cli/commands/start.test.ts
+      generation_command: pnpm test -- src/agent/codex/adapter.test.ts src/agent/codex/app-server-adapter.test.ts src/agent/codex/app-server-protocol.test.ts src/agent/codex/app-server-sessions.test.ts src/agent/codex/stream-json.test.ts src/commands/resume.test.ts src/signal/protocol.test.ts src/cli/commands/start.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -67,9 +73,12 @@ contracts:
         - src/agent/types.ts
         - src/agent/factory.ts
         - src/agent/codex/adapter.ts
+        - src/agent/codex/process.ts
         - src/agent/codex/stream-json.ts
         - src/agent/codex/app-server-adapter.ts
         - src/agent/codex/app-server-protocol.ts
+        - src/agent/codex/app-server-sessions.ts
+        - src/commands/index.ts
         - src/signal/protocol.ts
         - src/interaction/prompt.ts
         - src/agent/profile-policy.ts
@@ -79,10 +88,12 @@ contracts:
         - src/agent/codex/adapter.test.ts
         - src/agent/codex/app-server-adapter.test.ts
         - src/agent/codex/app-server-protocol.test.ts
+        - src/agent/codex/app-server-sessions.test.ts
+        - src/commands/resume.test.ts
         - src/agent/codex/stream-json.test.ts
         - src/signal/protocol.test.ts
         - src/cli/commands/start.test.ts
       replay_evidence:
-        - Contract-maintained endpoint code; replay is codex adapter, app-server protocol, and transactional restart harness.
+        - Contract-maintained endpoint code; replay is Codex adapter, app-server protocol, existing-thread discovery and binding, and transactional restart harness.
       hand_edit_guard: Update endpoint contract or profile policy harness before changing Codex authority boundaries.
     stop_condition: Return to L0-L2 when endpoint protocol behavior changes the generic domain-agent boundary or authority model.

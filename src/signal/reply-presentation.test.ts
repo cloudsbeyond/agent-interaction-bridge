@@ -181,11 +181,11 @@ describe('presentAnswerCard', () => {
       { bridge: 'bridge', domain: 'domain' },
     ) as { body: { elements: Array<Record<string, unknown>> } };
     const rendered = JSON.stringify(card);
-    expect(rendered.match(/Session：Bridge -/g)).toHaveLength(1);
-    expect(rendered).not.toContain('- > Session：Bridge -');
+    expect(rendered.match(/Session：📥 -/g)).toHaveLength(1);
+    expect(rendered).not.toContain('- > Session：📥 -');
     expect(card.body.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - bridge | Domain - domain',
+      content: '> Session：📥 - bridge | 🤖 - domain',
       text_size: 'notation',
     });
   });

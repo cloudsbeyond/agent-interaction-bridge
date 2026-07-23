@@ -11,7 +11,7 @@ describe('appendSessionIdentityCard', () => {
     expect(card.body.elements).toHaveLength(1);
     expect(result.body.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - bridge | Domain - domain',
+      content: '> Session：📥 - bridge | 🤖 - domain',
       text_size: 'notation',
     });
   });
@@ -25,7 +25,7 @@ describe('appendSessionIdentityCard', () => {
     expect(card.elements).toHaveLength(1);
     expect(result.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - bridge | Domain - domain',
+      content: '> Session：📥 - bridge | 🤖 - domain',
       text_size: 'notation',
     });
   });
@@ -48,10 +48,10 @@ describe('appendSessionIdentityCard', () => {
     };
 
     expect(result.elements).toHaveLength(2);
-    expect(JSON.stringify(result).match(/Session：Bridge -/g)).toHaveLength(1);
+    expect(JSON.stringify(result).match(/Session：📥 -/g)).toHaveLength(1);
     expect(result.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - bridge | Domain - domain',
+      content: '> Session：📥 - bridge | 🤖 - domain',
       text_size: 'notation',
     });
   });
@@ -64,7 +64,7 @@ describe('appendSessionIdentityCard', () => {
           { tag: 'markdown', content: 'body' },
           {
             tag: 'markdown',
-            content: '> Session：Bridge - old-bridge | Domain - old-domain',
+            content: '> Session：🌉 - old-bridge | 🤖 - old-domain | ⏱️ - 2m 3s',
             text_size: 'notation',
           },
         ],
@@ -75,10 +75,10 @@ describe('appendSessionIdentityCard', () => {
     };
 
     expect(result.body.elements).toHaveLength(2);
-    expect(JSON.stringify(result).match(/Session：Bridge -/g)).toHaveLength(1);
+    expect(JSON.stringify(result).match(/Session：📥 -/g)).toHaveLength(1);
     expect(result.body.elements.at(-1)).toEqual({
       tag: 'markdown',
-      content: '> Session：Bridge - bridge | Domain - domain',
+      content: '> Session：📥 - bridge | 🤖 - domain',
       text_size: 'notation',
     });
   });

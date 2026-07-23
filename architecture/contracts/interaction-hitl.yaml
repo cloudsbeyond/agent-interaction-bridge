@@ -36,13 +36,14 @@ contracts:
         - Risk approval and choice requests remain provider-neutral AgentSignal or InteractionRequest data.
         - Helper models may classify intent only as stateless typed proposals without execution authority.
         - Approval actions must be registered with explicit run, consume, and terminal semantics before card payloads become task decisions.
+        - "A pending approval binds the gateway mode and session context version that produced its AgentTask. Execution must fail closed when either value changes before approval."
       generation_commands:
         - cwd: .
-          command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+          command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/commands/gateway-mode.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts src/task/approval-store.test.ts
           mode: check
           writes_workspace: false
           ci_required: true
-      generation_command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+      generation_command: pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/commands/gateway-mode.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts src/task/approval-store.test.ts
       drift_checks:
         - agent-interaction-bridge architecture check
       drift_check: agent-interaction-bridge architecture check
@@ -55,12 +56,13 @@ contracts:
         - src/card/interaction-card.ts
         - src/card/task-approval-card.ts
       commands:
-        - pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts
+        - pnpm test -- src/config/schema-agent-endpoint.test.ts src/cli/commands/status.test.ts src/cli/commands/doctor.test.ts src/commands/gateway-mode.test.ts src/bot/prompt-plan.test.ts src/bot/channel.test.ts src/interaction/intent.test.ts src/interaction/model-judge.test.ts src/interaction/presentation-plan.test.ts src/interaction/protocol.test.ts src/task/run-policy.test.ts src/task/approval-contract.test.ts src/task/approval-store.test.ts
     l4:
       owner: agent
       artifacts:
         - src/interaction/intent.ts
         - src/interaction/model-judge.ts
+        - src/interaction/presentation-plan.ts
         - src/interaction/protocol.ts
         - src/interaction/prompt.ts
         - src/interaction/risk-policy.ts
@@ -81,6 +83,7 @@ contracts:
       harness:
         - src/interaction/intent.test.ts
         - src/interaction/model-judge.test.ts
+        - src/interaction/presentation-plan.test.ts
         - src/interaction/protocol.test.ts
         - src/interaction/prompt.test.ts
         - src/interaction/risk-policy.test.ts
@@ -90,6 +93,7 @@ contracts:
         - src/card/task-approval-card.test.ts
         - src/config/schema-agent-endpoint.test.ts
         - src/task/approval-contract.test.ts
+        - src/commands/gateway-mode.test.ts
         - src/task/run-policy.test.ts
         - src/task/approval-store.test.ts
       replay_evidence:

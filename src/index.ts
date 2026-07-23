@@ -72,6 +72,16 @@ export type {
   StatelessIntentJudge,
 } from './interaction/intent';
 export {
+  planInteractionPresentation,
+  renderInteractionPresentationPlanBlock,
+} from './interaction/presentation-plan';
+export type {
+  ExpressionProfile,
+  ExpressionProfileKind,
+  InteractionPresentationPlan,
+  InteractionPresentationSource,
+} from './interaction/presentation-plan';
+export {
   buildInteractionTurnPlan,
   renderContextBlock,
 } from './runtime/interaction-runtime';

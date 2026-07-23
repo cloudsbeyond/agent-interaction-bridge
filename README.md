@@ -35,10 +35,15 @@ bridge policy, presentation, carrier, and audit path. For proactive delivery,
 the bridge preserves `correlation_id -> message_id -> scope -> session_id` so a
 human reply resumes the originating domain-agent task instead of starting an
 unrelated session. Every normal Feishu/Lark reply ends with compact Bridge
-scope and Domain session/thread references for operator traceability; each
-displayed identifier is the final 12 characters with no ellipsis, rendered as
-one `Session：Bridge - <id> | Domain - <id>` line. Markdown and card
-carriers use a quote block; plain-text carriers keep the same undecorated line.
+scope and Domain session/thread references for operator traceability. Bridge
+scope displays its final 8 characters and Domain session/thread displays its
+first 8 characters; shorter values remain unchanged and no ellipsis is added.
+When task timing is available, the footer appends compact elapsed time and
+becomes one
+`Session：📥 - <id> | 🤖 - <id> | ⏳ - <duration>` line, where 📥 represents
+Bridge scope, 🤖 the Domain Agent thread, and ⏳ elapsed task time. Replies
+without task timing omit that segment. Markdown and card carriers use a quote
+block; plain-text carriers keep the same undecorated line.
 
 Runtime Services are the support plane for profiles, resources, sessions,
 ActionLog, artifacts, vectors, and other runtime state stores.
@@ -210,6 +215,12 @@ Current canonical Runtime Services resources:
 - Apply endpoint profiles at runtime so guest runs use isolated cwd,
   `CODEX_HOME`, sandbox, approval policy, and session keys.
 - Select either the stable Codex exec endpoint or the Codex app-server endpoint.
+- Use `/resume` to discover saved Codex threads in the current profile and cwd,
+  then explicitly bind an idle thread to the current Feishu/Lark scope. Bridge
+  uses the endpoint protocol instead of reading or copying Codex session files.
+  Resume cards deterministically remove Bridge-owned prompt envelopes from
+  endpoint metadata, collapse whitespace, and cap each task preview at 200
+  Unicode characters without loading conversation turns or calling a model.
 - Run as a macOS LaunchAgent so the bridge can come back after login/reboot.
 - Stream progress, tool activity, HITL requests, cards, and final results.
 - Route Domain Agent proactive `AgentSignal` updates through Bridge policy,
@@ -239,8 +250,8 @@ Current canonical Runtime Services resources:
   a later adapter may reuse the provider-neutral AgentSignal boundary.
 - Reuse bounded app-server pools only inside one endpoint profile. Treat this
   as a runtime-service optimization, not cross-agent session sharing.
-- Add thread, fork, side, queue, steer, and compact workflows so group
-  collaboration maps cleanly to task-level agent work units.
+- Add live shared-daemon thread control, fork, side, queue, steer, and compact
+  workflows so group collaboration maps cleanly to task-level agent work units.
 - Improve installer, doctor checks, service log views, and recovery UX for
   local operators.
 - Replace `ResourceCatalog` stubs with operator-provided model, storage, and

@@ -40,11 +40,10 @@ describe('Feishu intake contract helpers', () => {
         threadId: 'omt_1',
       }),
     ).toEqual({
-      chat_id: 'oc_1',
+      channel: 'feishu',
       chat_type: 'group',
-      sender_id: 'ou_1',
       sender_name: 'Ada',
-      thread_id: 'omt_1',
+      has_thread: true,
     });
   });
 
@@ -82,19 +81,22 @@ describe('Feishu intake contract helpers', () => {
         raw,
       }),
     ).toMatchObject({
+      channel: 'feishu',
       sender_type: 'app',
-      sender_app_id: 'cli_proxy',
-      feishu_mentions: '@_user_1 name=Bridge Bot (id=cli_bridge)',
+      feishu_mentions: '@Bridge Bot',
     });
-    expect(
-      renderFeishuMessageMetadataBlock([
-        {
-          content: '@Bridge Bot ping',
-          resources: [],
-          raw,
-        },
-      ]),
-    ).toContain('sender_type=app sender_app_id=cli_proxy');
+    const metadata = renderFeishuMessageMetadataBlock([
+      {
+        content: '@Bridge Bot ping',
+        resources: [],
+        raw,
+      },
+    ]);
+    expect(metadata).toContain('sender_type=app');
+    expect(metadata).toContain('mentions: @Bridge Bot');
+    expect(metadata).not.toContain('cli_proxy');
+    expect(metadata).not.toContain('cli_bridge');
+    expect(metadata).not.toContain('message_id');
   });
 
   test('removes Feishu attachment markdown references before building user text', () => {

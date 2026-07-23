@@ -33,8 +33,9 @@ contracts:
         - Runtime Services data must stay outside git and outside the bridge runtime home by default.
         - Vector indexes are Runtime Services retrieval state and must not be treated as execution endpoint session memory.
         - Domain-agent execution sessions are endpoint-profile state, not bridge semantic memory.
+        - Existing-thread binding stores only a validated endpoint session reference plus resolved cwd, runtime/profile key, and context version; Codex rollout contents remain endpoint-owned.
         - Proactive interaction correlation is bridge-owned `bounded-state` keyed by correlation id and must reference carrier message id, conversation scope, endpoint profile, and originating domain-agent session id without copying the session itself.
-        - ActionLog must durably record outbound intent, policy result, delivery result, correlation references, and reply-to-session resolution; carrier or provider logs alone are insufficient for correctness.
+        - ActionLog must durably distinguish reply correlation, one-time reply consumption, and originating-session resume success or failure; carrier or provider logs and `reply_consumed` state alone are insufficient to prove continuation.
         - Runtime Services may support many domain agents, but access must be typed and raw state must not be reused across agents.
         - Provider-side logs or model memory are external-provider-state and must not be trusted for bridge correctness.
         - LaunchAgent is a macOS runtime adapter, not a generic architecture primitive.

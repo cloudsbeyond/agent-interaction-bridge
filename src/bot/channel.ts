@@ -63,8 +63,8 @@ import { SignalTimelineStore } from '../signal/timeline';
 import { sendMacNotification, shouldNotifyMac } from '../signal/mac-notifier';
 import { presentAnswerCard } from '../signal/reply-presentation';
 import {
-  withInteractionProtocol,
-  withRelayPlainTextTemplate,
+  renderAgentPrompt,
+  type AgentPromptEnvelope,
 } from '../interaction/prompt';
 import type { StatelessIntentJudge } from '../interaction/intent';
 import { createBridgeStatelessIntentJudge } from '../interaction/model-judge';
@@ -104,7 +104,7 @@ import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, type QuotedContext } from './quote';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { planReplyMarkdown, sendReplyMarkdown, withReplyMentions } from './reply-mentions';
-import { replyModeForInteractionIntent } from './reply-mode-policy';
+import { replyModeForPresentationPlan } from './reply-mode-policy';
 import { buildFeishuPromptPlan } from './prompt-plan';
 import { resolveProactiveReply } from './proactive-reply';
 import { sendFeishuSignalInputs } from './feishu-signal-delivery';
@@ -710,7 +710,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     botOpenId: channel.botIdentity?.openId,
   });
 
-  let prompt: string;
+  let promptEnvelope: AgentPromptEnvelope;
   let cwd: string;
   let resumeFrom: string | undefined;
   let taskText: string;
@@ -722,10 +722,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   let agentProfileId: string | undefined;
   let agentRuntimeSessionKey = agent.id;
   let activeDomainSessionId = replyCorrelation?.sessionId;
-  const currentSessionIdentity = (): InteractionSessionIdentity => ({
-    bridge: scope,
-    domain: activeDomainSessionId ?? sessions.getRaw(scope)?.sessionId ?? resumeFrom,
-  });
+  let confirmedDomainSessionId: string | undefined;
+  let continuationCorrelationId = replyCorrelation?.correlationId;
+  let continuationSessionId = replyCorrelation?.sessionId;
+  let resumeAuditSettled = false;
+  const currentSessionIdentity = (): InteractionSessionIdentity => {
+    const task = taskStatus.snapshot(scope);
+    return {
+      bridge: scope,
+      domain: activeDomainSessionId ?? sessions.getRaw(scope)?.sessionId ?? resumeFrom,
+      ...(task?.startedAt !== undefined ? { elapsedMs: task.elapsedMs } : {}),
+    };
+  };
   const markdownWithSessionIdentity = (body: string): string =>
     appendSessionIdentityMarkdown(body, currentSessionIdentity());
   const cardWithSessionIdentity = (card: object): object =>
@@ -738,6 +746,46 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       runtimeServicesContextLoaded = true;
     }
     return runtimeServicesContextForTurn;
+  };
+  const appendProactiveReplyAudit = async (
+    type: 'reply_rejected' | 'reply_consumed' | 'resume_succeeded' | 'resume_failed',
+    correlationId: string,
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    const actionLog = new ProactiveActionLog({
+      context: await getRuntimeServicesContextForTurn(),
+      config: controls.cfg,
+    });
+    await actionLog.append({ type, correlationId, data });
+  };
+  const consumeReplyCorrelation = async (
+    correlation: ProactiveCorrelationRecord,
+    data: Record<string, unknown> = {},
+  ): Promise<void> => {
+    await appendProactiveReplyAudit('reply_consumed', correlation.correlationId, {
+      replyMessageId: lastMsg.messageId,
+      carrierMessageId: correlation.carrierMessageId,
+      scope: correlation.scope,
+      sessionId: correlation.sessionId,
+      ...data,
+    });
+    await proactiveCorrelations.markReplyConsumed(
+      correlation.correlationId,
+      lastMsg.messageId,
+    );
+  };
+  const settleResumeAudit = async (
+    type: 'resume_succeeded' | 'resume_failed',
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    if (!continuationCorrelationId || !continuationSessionId || resumeAuditSettled) return;
+    await appendProactiveReplyAudit(type, continuationCorrelationId, {
+      scope,
+      sessionId: continuationSessionId,
+      observedSessionId: confirmedDomainSessionId,
+      ...data,
+    });
+    resumeAuditSettled = true;
   };
   const turnTraceEnabled = getTurnTraceEnabled(controls.cfg);
   const traceRuntimeContext = turnTraceEnabled
@@ -823,6 +871,41 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   if (decision) {
     const pendingApproval = approvals.get(decision.approvalId);
     const approvalInScope = pendingApproval?.scope === scope ? pendingApproval : undefined;
+    if (
+      decision.action === 'execute'
+      && approvalInScope
+      && (
+        approvalInScope.gatewayMode !== gatewayMode
+        || approvalInScope.contextVersion !== sessionContextVersion
+      )
+    ) {
+      approvals.cancel(decision.approvalId);
+      taskStatus.finish(scope, 'cancelled');
+      turnTrace.record('approval_context_changed', {
+        approvalId: decision.approvalId,
+        approvalGatewayMode: approvalInScope.gatewayMode,
+        currentGatewayMode: gatewayMode,
+        approvalContextVersion: approvalInScope.contextVersion,
+        currentContextVersion: sessionContextVersion,
+      });
+      await settleApprovalCard(
+        channel,
+        lastMsg.messageId,
+        approvalInScope,
+        'cancel',
+        currentSessionIdentity(),
+      );
+      await sendReplyMarkdown(
+        channel,
+        chatId,
+        markdownWithSessionIdentity(
+          '审批对应的执行上下文已变化，原审批已失效。请重新发送任务。',
+        ),
+        sendOpts,
+      );
+      await flushTurnTrace();
+      return;
+    }
     const approval = decision.action === 'execute'
       ? approvalInScope && approvals.consume(decision.approvalId)
       : approvalInScope;
@@ -882,13 +965,15 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await flushTurnTrace();
       return;
     }
-    prompt = approval.prompt;
+    promptEnvelope = approval.promptEnvelope;
     cwd = approval.cwd;
     resumeFrom = approval.sessionId;
     taskText = approval.task;
     model = approval.model;
     replyModeOverride = approval.replyMode;
     agentProfileId = approval.agentProfileId ?? getAgentEndpointProfileId(controls.cfg);
+    continuationCorrelationId = approval.proactiveCorrelationId;
+    continuationSessionId = approval.proactiveSessionId;
     log.info('approval', 'execute', { scope, approvalId: approval.id });
     turnTrace.record('approval_execute', {
       approvalId: approval.id,
@@ -942,24 +1027,21 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       intentJudge: relayMode ? undefined : await getStatelessIntentJudge(),
       replyMentionTargets: getReplyMentionTargets(controls.cfg),
     });
-    prompt = promptPlan.prompt;
+    promptEnvelope = promptPlan.envelope;
     taskText = policy.taskText || summarizeTask(batch);
     model = policy.model;
     const intentReplyMode = relayMode
       ? undefined
-      : replyModeForInteractionIntent({
-          intent: promptPlan.intent,
-          userText: promptPlan.userText,
-        });
+      : replyModeForPresentationPlan(promptPlan.presentationPlan);
     replyModeOverride =
       policy.replyMode ??
       intentReplyMode;
     answerCardPresentationRequested =
       !policy.replyMode &&
       intentReplyMode === 'card' &&
-      promptPlan.intent.presentation?.representation === 'interactive_card';
+      promptPlan.presentationPlan?.representation === 'interactive_card';
     answerCardPresentationMode =
-      promptPlan.intent.presentation?.source === 'dynamic_ui_heuristic' ? 'dynamic_ui' : 'default';
+      promptPlan.presentationPlan?.source === 'dynamic_ui_heuristic' ? 'dynamic_ui' : 'default';
     answerCardPresentationUserText = promptPlan.userText;
     if (replyModeOverride && !policy.replyMode) {
       log.info('presentation', 'reply-mode-hint', {
@@ -969,7 +1051,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       });
     }
     agentProfileId = replyCorrelation?.endpointProfileId ?? getAgentEndpointProfileId(controls.cfg);
-    log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
+    log.info('prompt', 'built', {
+      promptSections: promptEnvelope.sections.map((section) => section.kind),
+      quotes: quotes.length,
+    });
 
     const requestedCwd = replyCorrelation?.cwd
       ?? workspaces.cwdFor(scope)
@@ -980,7 +1065,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       scope,
       agentRuntimeId: agent.id,
       run: {
-        prompt,
+        prompt: '',
         cwd: requestedCwd,
         model,
         stopGraceMs: getAgentStopGraceMs(controls.cfg),
@@ -1014,6 +1099,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         scope,
         agentProfileId,
         agentRuntimeId: agentRuntimeSessionKey,
+      });
+      await appendProactiveReplyAudit('reply_rejected', replyCorrelation.correlationId, {
+        reason: 'run_policy_mismatch',
+        stage: 'initial_run_policy',
+        replyMessageId: lastMsg.messageId,
+        scope,
+        sessionId: replyCorrelation.sessionId,
       });
       await sendReplyMarkdown(
         channel,
@@ -1056,7 +1148,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
     turnTrace.record('turn_planned', {
       taskText,
-      promptChars: prompt.length,
+      promptSections: promptEnvelope.sections.map((section) => section.kind),
       cwd,
       model: model ?? null,
       agentProfileId,
@@ -1073,13 +1165,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       chatId,
       messageId: lastMsg.messageId,
       threadId,
-      prompt,
+      promptEnvelope,
       task: taskText,
       cwd,
       sessionId: resumeFrom,
       model,
       replyMode: replyModeOverride,
       agentProfileId,
+      gatewayMode,
+      contextVersion: sessionContextVersion,
+      proactiveCorrelationId: replyCorrelation?.correlationId,
+      proactiveSessionId: replyCorrelation?.sessionId,
     });
 
     // 是否需要审批由策略统一决定：命令前缀、模型、配置都在 decideRunPolicy 中处理。
@@ -1090,10 +1186,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       log.info('approval', 'skipped', { scope, reason: 'auto-run', policy: policy.source });
     } else {
       if (replyCorrelation) {
-        await proactiveCorrelations.markReplyResolved(
-          replyCorrelation.correlationId,
-          lastMsg.messageId,
-        );
+        await consumeReplyCorrelation(replyCorrelation, {
+          outcome: 'approval_required',
+          approvalId: approval.id,
+        });
       }
       taskStatus.markPending(scope, { task: taskText, cwd });
       await sendManagedCard(
@@ -1113,15 +1209,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
+  const renderedPrompt = renderAgentPrompt(promptEnvelope);
   const runPlan = await prepareAgentProfileRunPlan({
     profileId: agentProfileId,
     runtimeHome: paths.appDir,
     scope,
     agentRuntimeId: agent.id,
     run: {
-      prompt: relayMode
-        ? withRelayPlainTextTemplate(prompt, { channel: 'feishu' })
-        : withInteractionProtocol(prompt, { channel: 'feishu' }),
+      prompt: renderedPrompt,
       sessionId: resumeFrom,
       cwd,
       model,
@@ -1150,6 +1245,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       correlationId: replyCorrelation.correlationId,
       scope,
     });
+    await appendProactiveReplyAudit('reply_rejected', replyCorrelation.correlationId, {
+      reason: 'run_policy_mismatch',
+      stage: 'final_run_policy',
+      replyMessageId: lastMsg.messageId,
+      scope,
+      sessionId: replyCorrelation.sessionId,
+    });
     await sendReplyMarkdown(
       channel,
       chatId,
@@ -1174,10 +1276,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   });
 
   if (replyCorrelation) {
-    await proactiveCorrelations.markReplyResolved(
-      replyCorrelation.correlationId,
-      lastMsg.messageId,
-    );
+    await consumeReplyCorrelation(replyCorrelation, { outcome: 'run_start' });
   }
   const run = agent.run(runPlan.run);
   const handle = activeRuns.register(scope, run);
@@ -1503,6 +1602,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       {
         onSession: (sessionId) => {
           activeDomainSessionId = sessionId;
+          confirmedDomainSessionId = sessionId;
         },
         onSignal: async (signal, source) => {
           signalTimeline.append(scope, signal);
@@ -1534,15 +1634,46 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     const runStreaming = async (
       onState: (state: RunState) => Promise<void>,
     ): Promise<void> => {
-      finalState = await runOnceWithStream(handle, onState);
+      try {
+        finalState = await runOnceWithStream(handle, onState);
+      } catch (error) {
+        if (resumedThisTry && continuationCorrelationId && continuationSessionId) {
+          const sessionConfirmed = confirmedDomainSessionId === continuationSessionId;
+          await settleResumeAudit(sessionConfirmed ? 'resume_succeeded' : 'resume_failed', {
+            terminal: 'stream_error',
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+        throw error;
+      }
 
-      if (isResumeFailureWithoutOutput(finalState, resumedThisTry)) {
+      const resumeFailed = isResumeFailureWithoutOutput(finalState, resumedThisTry);
+      if (resumedThisTry && continuationCorrelationId && continuationSessionId) {
+        const sessionConfirmed = confirmedDomainSessionId === continuationSessionId;
+        await settleResumeAudit(
+          resumeFailed || !sessionConfirmed ? 'resume_failed' : 'resume_succeeded',
+          {
+            terminal: finalState.terminal,
+            ...(resumeFailed
+              ? { reason: finalState.errorMsg ?? 'resume_failed_without_output' }
+              : !sessionConfirmed
+                ? { reason: confirmedDomainSessionId ? 'session_mismatch' : 'session_not_confirmed' }
+                : {}),
+          },
+        );
+      }
+
+      if (resumeFailed) {
+        const failedResumeSessionId = resumeFrom;
         log.warn('agent', 'resume-failed-fallback', {
           scope,
-          previousSessionId: resumeFrom,
+          previousSessionId: failedResumeSessionId,
           reason: finalState.errorMsg,
         });
         sessions.clear(scope);
+        resumeFrom = undefined;
+        activeDomainSessionId = undefined;
+        confirmedDomainSessionId = undefined;
         activeRuns.unregister(scope, run);
         // 用全新会话再跑一次。
         const fallbackPlan = await prepareAgentProfileRunPlan({
@@ -1567,7 +1698,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           pid: fallback.pid,
         });
         turnTrace.record('run_retry_without_resume', {
-          previousSessionId: resumeFrom ?? null,
+          previousSessionId: failedResumeSessionId ?? null,
           reason: finalState.errorMsg ?? null,
           pid: fallback.pid,
         });
