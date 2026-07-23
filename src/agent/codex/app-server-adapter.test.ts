@@ -49,7 +49,10 @@ vi.mock('node:child_process', () => ({
           if (message.method === 'turn/start') {
             stdout.write(`${JSON.stringify({
               method: 'turn/completed',
-              params: { threadId: 'thread_1', turn: { status: 'completed' } },
+              params: {
+                threadId: message.params?.threadId ?? 'thread_1',
+                turn: { status: 'completed' },
+              },
             })}\n`);
           }
         }
@@ -99,6 +102,11 @@ describe('buildCodexAppServerArgs', () => {
     expect(spawnState.requests.find((request) => request.method === 'thread/start')?.params?.cwd).toBe(
       '/tmp/task-workspace',
     );
+    expect(events[0]).toEqual({
+      type: 'system',
+      sessionId: 'thread_1',
+      cwd: '/tmp/task-workspace',
+    });
     expect(events).toContainEqual({ type: 'done', sessionId: 'thread_1' });
   });
 
@@ -115,5 +123,29 @@ describe('buildCodexAppServerArgs', () => {
 
     const appServerSpawn = spawnState.calls.find((call) => call.args[0] === 'app-server');
     expect(appServerSpawn?.options.cwd).toBe('/tmp/custom-app-server');
+  });
+
+  test('confirms a resumed thread before exposing its turn notifications', async () => {
+    const adapter = new CodexAppServerAdapter({ binary: 'codex', requestTimeoutMs: 50 });
+
+    const events = [];
+    for await (const event of adapter.run({
+      prompt: 'continue',
+      cwd: '/tmp/task-workspace',
+      sessionId: 'thread_existing',
+    }).events) {
+      events.push(event);
+    }
+
+    expect(spawnState.requests.find((request) => request.method === 'thread/resume')?.params).toMatchObject({
+      threadId: 'thread_existing',
+      cwd: '/tmp/task-workspace',
+    });
+    expect(events[0]).toEqual({
+      type: 'system',
+      sessionId: 'thread_existing',
+      cwd: '/tmp/task-workspace',
+    });
+    expect(events).toContainEqual({ type: 'done', sessionId: 'thread_existing' });
   });
 });

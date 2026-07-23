@@ -7,7 +7,11 @@ import type { Readable, Writable } from 'node:stream';
 import pkg from '../../../package.json';
 import { log } from '../../core/logger';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../types';
-import { buildCodexEnv, codexBinaryCandidates } from './adapter';
+import {
+  CodexAppServerSessionCatalog,
+  type CodexAppServerSessionCatalogOptions,
+} from './app-server-sessions';
+import { buildCodexEnv, findCodexBinary } from './process';
 import {
   buildInitializeParams,
   buildThreadResumeParams,
@@ -22,33 +26,24 @@ import { translateAppServerNotification } from './app-server-protocol';
 
 type CodexAppServerChild = ChildProcessByStdio<Writable, Readable, Readable>;
 
-export interface CodexAppServerAdapterOptions {
-  binary?: string;
-  codexHome?: string;
-  appServerCwd?: string;
-  requestTimeoutMs?: number;
-  stopGraceMs?: number;
-}
+export type CodexAppServerAdapterOptions = CodexAppServerSessionCatalogOptions;
 
 export class CodexAppServerAdapter implements AgentAdapter {
   readonly id = 'agent_runtime.codex_app_server';
   readonly displayName = 'Codex App Server';
+  readonly sessions: CodexAppServerSessionCatalog;
 
   private readonly binary: string;
   private resolvedBinary?: string;
 
   constructor(private readonly options: CodexAppServerAdapterOptions = {}) {
     this.binary = options.binary ?? 'codex';
+    this.sessions = new CodexAppServerSessionCatalog(options);
   }
 
   async isAvailable(): Promise<boolean> {
-    for (const candidate of codexBinaryCandidates(this.binary)) {
-      if (await canRunCodex(candidate)) {
-        this.resolvedBinary = candidate;
-        return true;
-      }
-    }
-    return false;
+    this.resolvedBinary = await findCodexBinary(this.binary);
+    return this.resolvedBinary !== undefined;
   }
 
   run(opts: AgentRunOptions): AgentRun {
@@ -89,7 +84,9 @@ class CodexAppServerRun {
       const protocol = await this.startProtocol();
       const onNotification = (notification: CodexProtocolNotification): void => {
         for (const event of translateAppServerNotification(notification)) {
-          queue.push(event);
+          // events() emits the authoritative thread id before draining this
+          // queue, so the provider notification would only duplicate it.
+          if (event.type !== 'system') queue.push(event);
         }
         if (notification.method === 'turn/started') {
           const turn = asRecord(asRecord(notification.params).turn);
@@ -122,6 +119,14 @@ class CodexAppServerRun {
             sandboxMode: this.options.run.sandboxMode,
           }),
         );
+        // The thread id returned by thread/start or supplied to thread/resume
+        // is authoritative for this run. Emit it before draining notifications
+        // so no proactive signal can overtake session establishment.
+        yield {
+          type: 'system',
+          sessionId: this.threadId,
+          cwd: this.options.run.cwd ?? process.cwd(),
+        };
         yield* queue;
       } finally {
         protocol.off('notification', onNotification);
@@ -230,10 +235,7 @@ class CodexAppServerRun {
   }
 
   private async resolveBinary(): Promise<string> {
-    for (const candidate of codexBinaryCandidates(this.binary)) {
-      if (await canRunCodex(candidate)) return candidate;
-    }
-    return this.binary;
+    return (await findCodexBinary(this.binary)) ?? this.binary;
   }
 
   private async shutdownChild(): Promise<void> {
@@ -295,14 +297,6 @@ class AsyncEventQueue<T> implements AsyncIterable<T> {
       },
     };
   }
-}
-
-function canRunCodex(binary: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn(binary, ['--version'], { stdio: 'ignore' });
-    child.on('error', () => resolve(false));
-    child.on('exit', (code) => resolve(code === 0));
-  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

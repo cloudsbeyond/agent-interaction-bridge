@@ -39,8 +39,8 @@ export const COMMAND_SPECS: CommandSpec[] = [
     surface: 'chat',
     admin: false,
     status: 'covered',
-    summary: 'list and resume recent Codex sessions',
-    help: '`/resume [N]` — 列出并恢复历史会话（最多 N 条）',
+    summary: 'discover and bind an existing idle Codex thread',
+    help: '`/resume [N]` — 列出并绑定当前 cwd 的已有 Codex Thread（最多 N 条）',
   },
   {
     name: '/cd',

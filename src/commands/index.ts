@@ -1,7 +1,12 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { LarkChannel, NormalizedMessage } from '@larksuiteoapi/node-sdk';
-import type { AgentAdapter } from '../agent/types';
+import type {
+  AgentAdapter,
+  AgentSessionCatalog,
+  AgentSessionQuery,
+  AgentSessionSummary,
+} from '../agent/types';
 import { defaultAgentTaskCwd } from '../agent/default-cwd';
 import { prepareAgentProfileRunPlan } from '../agent/profile-policy';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -44,7 +49,7 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatRelTime, listRecentSessions } from '../session/history';
+import { formatRelTime } from '../session/history';
 import { agentSessionContextVersion } from '../session/context-version';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
@@ -413,29 +418,127 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   const n = Number.parseInt(sub, 10);
   const limit = Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
 
-  const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
-  const sessions = await listRecentSessions(cwd, limit);
+  const resumeContext = await resolveResumeContext(ctx, limit);
+  if (!resumeContext) return;
+  const { catalog, query, runPlan } = resumeContext;
+  let sessions: AgentSessionSummary[];
+  try {
+    sessions = await catalog.list(query);
+  } catch (error) {
+    log.warn('session', 'catalog-list-failed', {
+      scope: ctx.scope,
+      profile: runPlan.profile.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await reply(ctx, '无法读取 Codex Thread 列表。请确认 Codex 已登录且 app-server 可用。');
+    return;
+  }
   const currentSession = ctx.sessions.getRaw(ctx.scope);
-  const entries = sessions.map((s) => ({
-    sessionId: s.sessionId,
-    preview: s.preview,
-    relTime: formatRelTime(s.mtime),
-    lineCount: s.lineCount,
-    current: s.sessionId === currentSession?.sessionId,
-  }));
-  const card = resumeCard(cwd, entries);
+  const entries = sessions
+    .filter((session) => !session.ephemeral)
+    .map((session) => ({
+      sessionId: session.sessionId,
+      preview: session.preview,
+      relTime: formatRelTime(session.updatedAtMs),
+      status: session.status,
+      source: session.source,
+      bindable: session.status !== 'active' && session.status !== 'error',
+      current: session.sessionId === currentSession?.sessionId,
+    }));
+  const card = resumeCard(query.cwd, entries);
   await sendCardReply(ctx, card);
 }
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
-  const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
+  if (ctx.activeRuns.has(ctx.scope)) {
+    await reply(ctx, '当前 scope 仍有任务在运行。请先 `/stop`，再绑定其他 Thread。');
+    return;
+  }
+  const resumeContext = await resolveResumeContext(ctx, 1);
+  if (!resumeContext) return;
+  const { catalog, query, runPlan } = resumeContext;
+  let selected: AgentSessionSummary | undefined;
+  try {
+    selected = await catalog.read(sessionId, query);
+  } catch (error) {
+    log.warn('session', 'catalog-read-failed', {
+      scope: ctx.scope,
+      profile: runPlan.profile.id,
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await reply(ctx, '无法校验这个 Codex Thread；当前 scope 未发生变化。');
+    return;
+  }
+  if (!selected) {
+    await reply(ctx, '没有找到这个 Codex Thread。当前 scope 未发生变化。');
+    return;
+  }
+  const rejection = resumeRejection(selected, query.cwd);
+  if (rejection) {
+    await reply(ctx, `${rejection} 当前 scope 未发生变化。`);
+    return;
+  }
   const mode = ctx.sessions.getGatewayMode(ctx.scope) ?? getGatewayMode(ctx.controls.cfg);
   resetScopeRuntimeState(ctx);
-  ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.agent.id, agentSessionContextVersion(mode));
+  ctx.sessions.set(
+    ctx.scope,
+    selected.sessionId,
+    query.cwd,
+    runPlan.agentRuntimeId,
+    agentSessionContextVersion(mode),
+  );
   await reply(
     ctx,
-    `✓ 已恢复会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
+    `✓ 已绑定 Codex Thread \`${selected.sessionId.slice(0, 8)}…\`。下一条消息会继续这个 Thread。`,
   );
+}
+
+async function resolveResumeContext(
+  ctx: CommandContext,
+  limit: number,
+): Promise<{
+  catalog: AgentSessionCatalog;
+  query: AgentSessionQuery;
+  runPlan: Awaited<ReturnType<typeof prepareAgentProfileRunPlan>>;
+} | undefined> {
+  const catalog = ctx.agent.sessions;
+  if (!catalog) {
+    await reply(ctx, '当前执行 Endpoint 不支持查询已有 Thread。');
+    return undefined;
+  }
+  const requestedCwd = ctx.workspaces.cwdFor(ctx.scope)
+    ?? defaultAgentTaskCwd({ agent: ctx.agent, cfg: ctx.controls.cfg });
+  const runPlan = await prepareAgentProfileRunPlan({
+    profileId: getAgentEndpointProfileId(ctx.controls.cfg),
+    runtimeHome: paths.appDir,
+    scope: ctx.scope,
+    agentRuntimeId: ctx.agent.id,
+    run: { prompt: '', cwd: requestedCwd },
+  });
+  const cwd = runPlan.run.cwd ?? requestedCwd;
+  return {
+    catalog,
+    runPlan,
+    query: {
+      cwd,
+      codexHome: runPlan.run.codexHome,
+      endpointProfileId: runPlan.profile.id,
+      limit,
+    },
+  };
+}
+
+function resumeRejection(
+  session: AgentSessionSummary | undefined,
+  cwd: string,
+): string | undefined {
+  if (!session) return '没有找到这个 Codex Thread。';
+  if (session.cwd !== cwd) return '这个 Codex Thread 不属于当前 cwd。';
+  if (session.ephemeral) return '临时 Codex Thread 不能绑定。';
+  if (session.status === 'active') return '这个 Codex Thread 当前仍在运行，P0 不允许并发绑定。';
+  if (session.status === 'error') return '这个 Codex Thread 当前状态异常，不能绑定。';
+  return undefined;
 }
 
 function resetScopeRuntimeState(ctx: CommandContext): boolean {
