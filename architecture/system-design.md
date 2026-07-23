@@ -36,8 +36,10 @@ and channel delivery.
 In this mode bridge must not run complex intent classification, helper-model
 intent judgment, Dynamic UI routing, presentation planning, presentation
 delivery support, or rich expression transforms. The agent receives the user's
-task text plus only minimal carrier facts needed to preserve quoted context and
-local attachment paths.
+task in one canonical relay prompt envelope: the plain-text response template
+plus only the carrier facts needed to preserve quoted context, mention names,
+and local attachment paths. It omits adapter-only protocol, bridge-context,
+intent, and presentation-plan sections.
 
 ### Relay Flow
 
@@ -49,7 +51,7 @@ sequenceDiagram
 
   H->>B: message, quote, attachments
   B->>B: auth, allowlist, mention, queue, scope
-  B->>D: minimal task with carrier facts
+  B->>D: minimal relay prompt envelope
   D-->>B: stream or agent signal
   B-->>H: rendered reply
 ```
@@ -58,8 +60,9 @@ Relay execution steps:
 
 1. Resolve credentials, access, chat allowlist, mention policy, and scope.
 2. Debounce messages and collect text, quotes, and local attachment paths.
-3. Build a minimal `AgentTask` without bridge context blocks, interaction
-   protocol injection, helper-model judgment, or presentation hints.
+3. Build the minimal relay prompt envelope without adapter-only interaction
+   protocol, bridge context, helper-model judgment, intent, or presentation
+   sections.
 4. Run the selected execution endpoint with the current cwd/profile/session.
 5. Render the endpoint stream back to the channel.
 
@@ -96,7 +99,7 @@ sequenceDiagram
   alt adapter resources available
     R-->>B: resources available
     B->>B: intent, HITL, presentation hints
-    B->>D: adapted task
+    B->>D: adapter prompt envelope
     D-->>B: stream or agent signal
     B-->>H: rendered response
   else adapter resources missing
@@ -116,7 +119,8 @@ Adapter execution steps:
 4. If adapter resources are missing, notify the channel and use the relay flow
    for this run.
 5. If adapter resources are available, classify intent, apply HITL and
-   presentation guidance, and build an adapted `AgentTask`.
+   presentation guidance, and build the adapter prompt envelope for its
+   `AgentTask`.
 6. Run the selected execution endpoint without changing endpoint authority.
 7. Lower agent signals through presentation and delivery support when available,
    then render to the channel.
@@ -131,13 +135,18 @@ use, risk judgment, and its execution session.
 ```mermaid
 sequenceDiagram
   participant H as Human Surface
+  participant C as Carrier
   participant B as Bridge Agent
   participant D as Domain Agent
+  participant L as ActionLog
 
-  H->>B: HumanTurn
+  H->>C: message, reply, attachment
+  C->>B: HumanTurn
   B->>D: AgentTask
   D-->>B: AgentSignal / outbound intent
-  B-->>H: PresentationPlan + DeliveryPlan
+  B->>L: decision, correlation, delivery audit
+  B->>C: DeliveryPlan
+  C-->>H: rendered response
 ```
 
 Both directions use the same interaction boundary. When a Domain Agent starts
@@ -145,6 +154,9 @@ an outbound interaction, Bridge applies policy and delivery planning, records
 the send in ActionLog, and preserves
 `correlation_id -> message_id -> scope -> session_id`. A human reply resolves
 that chain before session lookup and resumes the originating Domain Agent task.
+`reply_correlated`, `reply_consumed`, and `resume_succeeded` or `resume_failed`
+are separate ActionLog outcomes; claiming a reply never proves that the endpoint
+continued it.
 
 Every normal Feishu/Lark response also projects the current Bridge conversation
 scope and Domain Agent session/thread reference into a presentation-only footer.
@@ -165,8 +177,8 @@ presentation observability. Bridge first applies endpoint-profile policy, asks
 the selected endpoint adapter for saved threads in the resolved cwd, and lets
 the human choose one. Before persisting the reference, Bridge re-reads the
 thread through the same profile and rejects missing, cwd-mismatched, ephemeral,
-or active threads. Discovery previews are derived only from endpoint-supplied
-thread name/preview metadata: deterministic lowering first extracts the
+or active threads. Discovery previews prefer endpoint `thread.name`, then
+`thread.preview`, then `(空会话)`. Deterministic lowering first extracts the
 canonical `<user_message>` body, falls back to removing legacy Bridge-owned
 prompt prefixes, collapses whitespace, and caps the result at 200 Unicode
 characters. It does not load turns or invoke a helper model. The Bridge session
@@ -206,7 +218,7 @@ sequenceDiagram
   B->>R: optional typed proposal
   R-->>B: proposal or missing resource
   B->>B: build presentation and delivery plan
-  B-->>C: carrier payload or fallback
+  B-->>C: DeliveryPlan or fallback
 ```
 
 ### Execution Layer
@@ -226,7 +238,7 @@ sequenceDiagram
   B->>D: task with endpoint profile and session scope
   D-->>B: agent signal or outbound intent
   B->>L: record task and signal
-  B-->>C: rendered update or final answer
+  B-->>C: DeliveryPlan for update or final answer
   B->>L: record delivery result
 ```
 
@@ -276,6 +288,7 @@ Before adding or changing a feature, classify it by ontology object:
 | Desired semantic expression shape | `ExpressionProfile` |
 | Model recommendation | `TypedProposal` |
 | Channel-neutral display plan | `PresentationPlan` |
+| Domain Agent prompt envelope | `InteractionTurnPlan` |
 | Carrier-specific delivery plan | `DeliveryPlan` |
 | Execution delegation | `AgentTask` |
 | Execution result | `AgentSignal` |
@@ -356,11 +369,11 @@ carrier send/update APIs or domain-agent behavior.
 ### InteractionTurnPlan
 
 Owns the ordered, typed Domain Agent prompt sections for one human turn.
-Adapter plans may contain interaction protocol, signal protocol, presentation
-hint, minimal semantic surface context, quoted context, InteractionIntent,
-PresentationPlan, user message, and attachments. Relay plans contain only the
-plain-text response template plus the minimum quote, mention-name, user-message,
-and attachment facts needed for transport.
+Adapter plans contain interaction protocol, signal protocol, presentation hint,
+minimal semantic surface context, optional quoted context and carrier metadata,
+InteractionIntent, PresentationPlan, user message, and attachments. Relay plans
+contain only the plain-text response template plus the minimum quote,
+mention-name, carrier, user-message, and attachment facts needed for transport.
 
 `InteractionTurnPlan` stays structured through approval and policy resolution.
 Its section content contains only the text inside its canonical XML-like tag.
@@ -368,9 +381,10 @@ One deterministic renderer owns tag emission, escaped structured attributes,
 LF normalization, fixed section order, and exactly one blank line between
 non-empty sections. It removes only outer blank lines and preserves internal
 user Markdown, indentation, blank lines, and fenced code. The canonical order
-is protocols, presentation hint, context/quotes, intent/presentation plan, user
-message, then attachments. Legacy prewrapped sections are unwrapped once during
-normalization so persisted approval envelopes remain readable without migration.
+is protocols, presentation hint, bridge context, quoted message, carrier
+metadata, InteractionIntent, PresentationPlan, user message, then attachments.
+Legacy prewrapped sections are unwrapped once during normalization so persisted
+approval envelopes remain readable without migration.
 Provider routing identifiers such as chat, sender, and mention target ids stay
 in Bridge state unless the task semantics explicitly require them.
 
@@ -426,7 +440,8 @@ Domain Agent session. It is bounded by the current endpoint profile and cwd.
 The Codex app-server adapter currently lowers this to `thread/list` and
 `thread/read`; provider-specific source/status payloads stay inside that
 adapter. An active thread is ineligible because P0 has no shared-daemon
-single-writer coordination with Codex Desktop.
+single-writer coordination with Codex Desktop. Preview lowering prefers name,
+then preview, then `(空会话)` after it removes Bridge-owned prompt envelopes.
 
 ### ActionLog
 

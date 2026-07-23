@@ -21,12 +21,15 @@ Runtime path:
 ```mermaid
 flowchart LR
   user["**Human Surface**<br/>Feishu / Lark"]
+  carrier["**Carrier**<br/>Feishu / Lark"]
   bridge["**Bridge Agent**<br/>Agent-Interaction-Bridge"]
   codex["**Domain Agent**<br/>Codex via exec / app-server"]
-  user -->|"HumanTurn"| bridge
+  user -->|"message, reply, attachment"| carrier
+  carrier -->|"HumanTurn"| bridge
   bridge -->|"AgentTask"| codex
-  codex -. "AgentSignal / outbound intent" .-> bridge
-  bridge -. "PresentationPlan + DeliveryPlan" .-> user
+  codex -->|"AgentSignal"| bridge
+  bridge -->|"DeliveryPlan"| carrier
+  carrier -->|"rendered response"| user
 ```
 
 The formal interaction path is bidirectional. Human turns reach a domain agent
@@ -44,6 +47,11 @@ becomes one
 Bridge scope, 🤖 the Domain Agent thread, and ⏳ elapsed task time. Replies
 without task timing omit that segment. Markdown and card carriers use a quote
 block; plain-text carriers keep the same undecorated line.
+
+Only endpoint-native signals and explicit domain-agent interaction requests may
+create proactive, reply-resumable correlation. A signal the Bridge derives from
+an in-flight tool result only enriches the current response; it is not a new
+human interaction or continuation authority.
 
 Runtime Services are the support plane for profiles, resources, sessions,
 ActionLog, artifacts, vectors, and other runtime state stores.
@@ -82,6 +90,10 @@ session only. Switching to `adapter` requires available Runtime Services
 adapter resources; otherwise the bridge keeps or degrades to `relay` and
 notifies the channel.
 
+When an approval is pending, Bridge freezes the effective gateway mode and
+prompt context version that produced it. A later mode or context change makes
+that approval stale and fails closed before endpoint execution.
+
 `agent-interaction-bridge status` and `agent-interaction-bridge doctor` print
 the active gateway mode so operators can verify whether the bridge is
 running as relay or adapter.
@@ -94,15 +106,16 @@ flowchart LR
   channel["Bridge Channel Duties<br/>auth · allowedChats · mention · queue · session · attachments · rendering"]
   agent["Domain Agent<br/>Codex via exec / app-server"]
   human -->|"message + attachments + quotes"| channel
-  channel -->|"minimal AgentTask"| agent
+  channel -->|"minimal relay prompt envelope"| agent
   agent -->|"stream / AgentSignal"| channel
   channel -->|"rendered reply"| human
 ```
 
 Relay mode keeps the channel reliable and policy-bound, then forwards the
-user's task with only the carrier facts needed for continuity. It skips complex
-intent rewriting, helper-model judgment, Dynamic UI routing, and delivery
-support enrichment.
+user's task in the same canonical envelope used at endpoint handoff, with only
+the plain-text response template and carrier facts needed for continuity. It
+skips complex intent rewriting, helper-model judgment, Dynamic UI routing, and
+delivery support enrichment.
 
 ### Adapter Flow
 
@@ -116,7 +129,7 @@ flowchart LR
   human -->|"message + attachments + quotes"| channel
   channel -->|"HumanTurn"| adapter
   adapter <-->|"resource status / typed proposals"| runtime
-  adapter -->|"adapted AgentTask"| agent
+  adapter -->|"adapter prompt envelope"| agent
   agent -->|"stream / AgentSignal"| adapter
   adapter -->|"PresentationPlan / DeliveryPlan"| channel
   channel -->|"rendered reply"| human
@@ -146,6 +159,9 @@ narrative and `PRD.md`; they should not redefine L0 product intent.
 - `PresentationPlan`: channel-neutral display intent.
 - `DeliveryPlan`: carrier-specific lowering from `PresentationPlan` and
   `SurfaceContext`.
+- `InteractionTurnPlan`: normalized, gateway-mode-separated Domain Agent prompt
+  envelope. Adapter carries bounded interaction and presentation guidance;
+  relay carries only its plain-text response template and necessary carrier facts.
 - `AgentSignal`: semantic event, not Feishu JSON or Codex raw stream.
 - `Carrier`: channel protocol such as `feishu.card` or `cli.stdout`.
 - `AgentTask`: explicit delegation to a domain agent through an execution
@@ -218,19 +234,23 @@ Current canonical Runtime Services resources:
 - Use `/resume` to discover saved Codex threads in the current profile and cwd,
   then explicitly bind an idle thread to the current Feishu/Lark scope. Bridge
   uses the endpoint protocol instead of reading or copying Codex session files.
-  Resume cards deterministically remove Bridge-owned prompt envelopes from
-  endpoint metadata, collapse whitespace, and cap each task preview at 200
-  Unicode characters without loading conversation turns or calling a model.
+  Resume cards prefer endpoint `thread.name`, then `thread.preview`, then
+  `(空会话)`. They deterministically remove Bridge-owned prompt envelopes,
+  collapse whitespace, and cap each task preview at 200 Unicode characters
+  without loading conversation turns or calling a model.
 - Run as a macOS LaunchAgent so the bridge can come back after login/reboot.
 - Stream progress, tool activity, HITL requests, cards, and final results.
-- Route Domain Agent proactive `AgentSignal` updates through Bridge policy,
-  ActionLog, Feishu/Lark delivery, and reply-to-originating-session correlation.
+- Route endpoint-native Domain Agent proactive `AgentSignal` updates and explicit
+  interaction requests through Bridge policy, ActionLog, Feishu/Lark delivery,
+  and reply-to-originating-session correlation. Bridge-derived tool signals are
+  same-turn presentation only.
 - Append compact Bridge scope and Domain session/thread references to every
   normal Feishu/Lark text or card reply without turning those references into
   routing authority.
 - Download Feishu attachments locally and pass paths to the execution endpoint.
 - Select `relay` or `adapter` gateway mode globally, with a per-session
-  `/gatewayMode` override.
+  `/gatewayMode` override; a pending approval remains valid only for the mode
+  and prompt context version that created it.
 - Plan channel-neutral interaction turns before handing them to the current
   Feishu/Lark carrier.
 - Use Dynamic UI in `ExpressionProfile` and `PresentationPlan`: comparison, icon,

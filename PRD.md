@@ -27,19 +27,25 @@ session-continuity guarantees as a human-initiated task.
 P0 is a local-first bounded interaction bridge agent:
 
 - Human surface intake over the current Feishu/Lark path.
-- Bridge-agent objects for turn facts, surface context, perception,
-  intent, expression, presentation, delivery, tasks, signals, and action logs.
+- Bridge-agent objects for turn facts, surface context, perception, intent,
+  expression, presentation, delivery, prompts, tasks, signals, and action logs.
 - Domain-agent handoff to Codex through exec or app-server endpoints.
+- One normalized, gateway-mode-separated Domain Agent prompt envelope per human
+  turn. It keeps the original user task distinct from Bridge protocol and
+  carrier facts, while retaining user-authored formatting.
 - Human-selected discovery and binding of an existing idle Codex thread through
   the active endpoint profile, so a Feishu/Lark scope can continue saved local
   work without copying endpoint session files into Bridge state. The discovery
-  list removes Bridge-owned prompt envelopes from endpoint metadata and limits
-  each task preview to 200 Unicode characters without loading conversation
-  turns or invoking a helper model.
+  list prefers endpoint `thread.name`, then `thread.preview`, then `(空会话)`.
+  It removes Bridge-owned prompt envelopes from endpoint metadata and limits
+  each task preview to 200 Unicode characters without loading conversation turns
+  or invoking a helper model.
 - Domain-agent-initiated outbound interaction through bridge policy,
   presentation, carrier delivery, and ActionLog.
 - Correlation from outbound intent to carrier message, conversation scope, and
-  originating domain-agent session so human replies resume the same task.
+  originating domain-agent session so human replies resume the same task, with
+  distinct audit evidence for reply matching, one-time consumption, and endpoint
+  resume success or failure.
 - A compact presentation-only footer on every normal Feishu/Lark reply showing
   the current Bridge scope and Domain session/thread reference. Bridge scope
   displays its final 8 characters and Domain session/thread displays its first
@@ -49,7 +55,8 @@ P0 is a local-first bounded interaction bridge agent:
   Bridge scope, 🤖 the Domain Agent thread, and ⏳ elapsed task time. Replies
   without task timing omit that segment. Markdown and card carriers use quote
   styling; plain-text carriers omit quote syntax.
-- Gateway modes: `relay` and `adapter`.
+- Gateway modes: `relay` and `adapter`. A pending approval freezes the effective
+  mode and prompt context version; a mismatch is stale and must fail closed.
 - Runtime Services as the external support plane for helper resources, storage,
   sessions, artifacts, vectors, and resource status.
 - Explicit authority boundaries for profiles, credentials, approvals,
@@ -84,9 +91,8 @@ README.md / PRD.md
   -> architecture/README.md
   -> architecture/agentic-ontology.md + architecture/system-design.md
   -> architecture/contracts/*.yaml
-  -> agent-devops/ai-contract-index.md + harness checks
-  -> TypeScript runtime, CLI, carrier and presentation code
-  -> package / validation evidence
+  -> src/ + bin/ + package metadata
+  -> tests + public-safety + architecture checks + package evidence
 ```
 
 `agent-devops/` may index product contracts and harness evidence, but it does

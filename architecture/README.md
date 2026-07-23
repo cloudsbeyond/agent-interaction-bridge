@@ -13,12 +13,13 @@ L1/L2 assets and must not redefine product intent.
 
 - [agentic-ontology.md](./agentic-ontology.md): target product ontology for
   treating the bridge as a bounded bridge agent between humans and domain agents
-  with explicit runtime objects, capability boundaries, typed proposals, and
-  action logs.
+  with explicit runtime objects, capability boundaries, typed proposals,
+  prompt-envelope ownership, and action logs.
 - [system-design.md](./system-design.md): target system design for the current
   bidirectional Feishu/Lark and Codex path, gateway modes, proactive delivery
-  correlation, compact reply identity observability, runtime object flow,
-  endpoint profile boundaries, and Runtime Services integration.
+  correlation and resume audit, compact reply identity observability, canonical
+  prompt rendering, runtime object flow, endpoint profile boundaries, and Runtime
+  Services integration.
 - [contracts/*.yaml](./contracts/): executable product architecture contract
   records for public API, carrier intake, presentation rendering, HITL,
   endpoint policy, runtime data, operator commands, and resource architecture.
@@ -46,7 +47,8 @@ Keep architecture diagrams layered. A diagram in this directory should express
 one concern at a time: runtime path, gateway mode, object interpretation,
 delivery, execution, or evidence. If a diagram needs nested subgraphs or mixes
 multiple concerns, split it into several small diagrams with explicit layer
-titles.
+titles. A delivery plan always lowers to a Carrier; diagrams must not show it as
+a payload sent directly to a human.
 
 Run `agent-interaction-bridge architecture check` after product architecture or
 contract changes to verify the registry and path references.

@@ -84,13 +84,19 @@ README.md / PRD.md
   `ExpressionProfile`, `TypedProposal`, `PresentationPlan`, `DeliveryPlan`,
   `AgentTask`, `AgentSignal`, and `ActionLog`.
 - `AgentSignal` is semantic truth, not provider payload.
+- Endpoint-native signals and explicit domain-agent interaction requests may
+  create proactive, reply-resumable correlation. Signals Bridge derives from an
+  in-flight tool result are same-turn presentation enrichment only and must not
+  create proactive correlation or continuation authority.
 - The formal interaction path in both directions is human surface <-> bridge
   agent <-> domain agent. Domain-agent-initiated messages must return through
   bridge policy, presentation, carrier delivery, and ActionLog rather than
   bypassing the bridge.
 - The bridge must preserve a correlation chain from outbound intent through
   carrier message and conversation scope to the originating domain-agent
-  session, so a human reply resumes the same task context.
+  session, so a human reply resumes the same task context. `reply_correlated`,
+  `reply_consumed`, and the endpoint `resume_succeeded` or `resume_failed`
+  audit outcome are distinct; consumption alone never proves continuation.
 - Every normal Feishu/Lark reply must expose the current Bridge conversation
   scope and Domain Agent session/thread reference as presentation-only
   observability. Each displayed identifier is at most 8 characters: longer
@@ -111,7 +117,13 @@ README.md / PRD.md
 - `Carrier` is channel protocol.
 - `DeliveryPlan` maps a `PresentationPlan` and `SurfaceContext` to a carrier
   payload.
-- `InteractionTurnPlan` is the channel-neutral prompt plan for one human turn.
+- `InteractionTurnPlan` is the channel-neutral, ordered Domain Agent prompt
+  envelope for one human turn. Adapter uses bounded interaction/presentation
+  protocol, semantic context, intent/presentation plan, user message, and
+  attachments; relay uses only its plain-text response template and minimum
+  quote, carrier, user-message, and attachment facts. One deterministic renderer
+  owns canonical tags, LF normalization, outer-whitespace trimming, and section
+  order while preserving the user's internal formatting.
 - `CapabilityCatalog` records bridge cognitive capabilities such as language,
   vision, audio, embedding, vector search, expression transform, image
   generation, voice generation, quality evaluation, and execution delegation.
@@ -156,6 +168,9 @@ README.md / PRD.md
   or publishing authority by accident.
 - Runtime handoff must apply endpoint profile policy before session lookup,
   approval persistence, or agent execution.
+- Pending approvals freeze the effective gateway mode and prompt context version
+  that produced their AgentTask. A changed mode or context invalidates the
+  approval and must fail closed before endpoint execution.
 - Conversation scope is task state. Topic-style scopes should isolate session,
   cwd, pending queue, and signal timeline.
 - `exec` and `app-server` are endpoint implementations behind the same agent

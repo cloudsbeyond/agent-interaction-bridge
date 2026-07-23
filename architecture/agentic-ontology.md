@@ -147,14 +147,18 @@ key, and profile.
 ```mermaid
 flowchart LR
   human["Human"]
-  surface["Surface<br/>Feishu, Web, CLI, voice, watch"]
+  carrier["Carrier / Surface<br/>Feishu, Web, CLI, voice, watch"]
   bridge["Bridge Agent<br/>bounded interaction mediation"]
   endpoint["Domain Agent<br/>Codex or remote agent via endpoint"]
+  runtime["Runtime Services<br/>profiles, resources, ActionLog"]
 
-  human --> surface --> bridge
+  human --> carrier
+  carrier -->|"HumanTurn"| bridge
   bridge -->|"AgentTask only"| endpoint
   endpoint -->|"AgentSignal / outbound intent"| bridge
-  bridge -->|"PresentationPlan + DeliveryPlan"| surface
+  bridge -->|"DeliveryPlan"| carrier
+  carrier -->|"rendered response"| human
+  runtime -. "typed support and durable evidence" .-> bridge
 ```
 
 Runtime Services are the support plane for profiles, resources, sessions,
@@ -322,6 +326,13 @@ deterministic renderer lowers it at the execution endpoint boundary. Carrier
 routing ids remain in Bridge state unless Domain Agent reasoning explicitly
 needs them.
 
+Adapter plans contain bounded interaction and presentation sections before the
+user message. Relay plans contain only a plain-text response template and the
+minimum quote, carrier, user-message, and attachment facts needed for transport.
+The renderer owns canonical tags, section order, LF normalization, and outer
+blank-line trimming; user-authored Markdown, indentation, blank lines, and code
+blocks remain intact.
+
 For Feishu/Lark, the final presentation projects existing Bridge scope and
 Domain session/thread references into a compact observability footer. This is a
 display rule over existing state, not a new ontology object or routing input.
@@ -411,11 +422,13 @@ ActionLog is the source for future learning and debugging.
 ```mermaid
 sequenceDiagram
   participant H as Human
+  participant C as Carrier
   participant B as Bridge Agent
   participant D as Domain Agent
   participant L as ActionLog
 
-  H->>B: HumanTurn
+  H->>C: message, reply, attachment
+  C->>B: HumanTurn
   B->>B: Derive SurfaceContext
   B->>B: Perception if needed
   B->>B: Intent or expression proposal if needed
@@ -425,17 +438,20 @@ sequenceDiagram
     D-->>B: AgentSignal
   end
   B->>B: PresentationPlan
-  B->>B: DeliveryPlan
-  B-->>H: Delivered response
+  B->>C: DeliveryPlan
+  C-->>H: Delivered response
   B->>L: Decision and delivery record
 
   opt domain-agent-initiated interaction
     D-->>B: AgentSignal / outbound intent
     B->>B: Policy + PresentationPlan + DeliveryPlan
-    B-->>H: Proactive delivery
+    B->>C: Proactive DeliveryPlan
+    C-->>H: Proactive delivery
     B->>L: correlation_id + message_id + scope + session_id
-    H->>B: Reply HumanTurn
+    H->>C: Reply
+    C->>B: Reply HumanTurn
     B->>D: Resume originating session
+    B->>L: reply and resume outcome
   end
 ```
 
